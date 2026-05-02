@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # service-health-check.sh — Check Linux service status and optionally restart stopped services.
 
-set -euo pipefail
+set -uo pipefail
 
 # ---------------------------------------------------------------------------
 # Defaults (edit to hardcode for scheduled/non-interactive use)
@@ -94,52 +94,45 @@ log() {
 
 # ---------------------------------------------------------------------------
 # Check a single service
+# Result is written to global _svc_result; output printed directly (no subshell).
 # ---------------------------------------------------------------------------
+_svc_result=""
+
 check_service() {
     local svc="$1"
-    local status
-    status=$(systemctl is-active "$svc" 2>/dev/null || echo "inactive")
-
     local action="none"
-    local color result
+    local color label
 
-    case "$status" in
-        active)
-            color="$GREEN"
-            result="RUNNING"
-            ;;
-        activating)
-            color="$YELLOW"
-            result="STARTING"
-            ;;
-        *)
-            color="$RED"
-            result="STOPPED ($status)"
-            if [[ "$AUTO_RESTART" == true ]]; then
-                if systemctl restart "$svc" 2>/dev/null; then
-                    sleep 2
-                    local new_status
-                    new_status=$(systemctl is-active "$svc" 2>/dev/null || echo "inactive")
-                    if [[ "$new_status" == "active" ]]; then
-                        color="$YELLOW"
-                        result="RESTARTED (now running)"
-                        action="restarted"
-                    else
-                        result="RESTART FAILED"
-                        action="restart_failed"
-                    fi
+    if systemctl is-active --quiet "$svc" 2>/dev/null; then
+        color="$GREEN"
+        label="RUNNING"
+    else
+        local raw_status
+        raw_status=$(systemctl is-active "$svc" 2>/dev/null || true)
+        color="$RED"
+        label="STOPPED (${raw_status:-unknown})"
+
+        if [[ "$AUTO_RESTART" == true ]]; then
+            if systemctl restart "$svc" 2>/dev/null; then
+                sleep 2
+                if systemctl is-active --quiet "$svc" 2>/dev/null; then
+                    color="$YELLOW"
+                    label="RESTARTED"
+                    action="restarted"
                 else
-                    result="RESTART FAILED"
+                    label="RESTART FAILED"
                     action="restart_failed"
                 fi
+            else
+                label="RESTART FAILED"
+                action="restart_failed"
             fi
-            ;;
-    esac
+        fi
+    fi
 
-    printf "${color}  %-12s${RESET}  %s\n" "$result" "$svc"
-    log "$svc status=$status action=$action result=$result"
-
-    echo "$result"
+    printf "${color}  %-16s${RESET}  %s\n" "$label" "$svc"
+    log "$svc label=$label action=$action"
+    _svc_result="$label"
 }
 
 # ---------------------------------------------------------------------------
@@ -149,10 +142,10 @@ TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 HOSTNAME=$(hostname -f 2>/dev/null || hostname)
 
 echo ""
-echo -e "${CYAN}  Service Health Check — $HOSTNAME — $TIMESTAMP${RESET}"
-[[ "$AUTO_RESTART" == true ]] && echo -e "${YELLOW}  Auto-restart: ENABLED${RESET}"
+printf "${CYAN}  Service Health Check — %s — %s${RESET}\n" "$HOSTNAME" "$TIMESTAMP"
+[[ "$AUTO_RESTART" == true ]] && printf "${YELLOW}  Auto-restart: ENABLED${RESET}\n"
 echo "  $(printf '%.0s─' {1..60})"
-printf "  %-12s  %s\n" "STATUS" "SERVICE"
+printf "  %-16s  %s\n" "STATUS" "SERVICE"
 echo "  $(printf '%.0s─' {1..60})"
 
 log "--- Service health check started on $HOSTNAME ---"
@@ -163,17 +156,18 @@ restarted=0
 failed=0
 
 for svc in "${SERVICES[@]}"; do
-    result=$(check_service "$svc")
-    case "$result" in
-        RUNNING)          (( running++ ))    || true ;;
-        RESTARTED*)       (( restarted++ ))  || true ;;
-        RESTART\ FAILED)  (( failed++ ))     || true ;;
-        *)                (( stopped++ ))    || true ;;
+    check_service "$svc"
+    case "$_svc_result" in
+        RUNNING)         (( running++ ))   || true ;;
+        RESTARTED)       (( restarted++ )) || true ;;
+        RESTART\ FAILED) (( failed++ ))    || true ;;
+        *)               (( stopped++ ))   || true ;;
     esac
 done
 
 echo "  $(printf '%.0s─' {1..60})"
-echo -e "  Checked: ${#SERVICES[@]}  |  ${GREEN}Running: ${running}${RESET}  |  ${YELLOW}Restarted: ${restarted}${RESET}  |  ${RED}Stopped/Failed: $(( stopped + failed ))${RESET}"
+printf "  Checked: %d  |  ${GREEN}Running: %d${RESET}  |  ${YELLOW}Restarted: %d${RESET}  |  ${RED}Stopped/Failed: %d${RESET}\n" \
+    "${#SERVICES[@]}" "$running" "$restarted" "$(( stopped + failed ))"
 [[ -n "$LOG_FILE" ]] && echo "  Log: $LOG_FILE"
 echo ""
 
