@@ -1,0 +1,47 @@
+# Bash Scripts
+
+Shell scripts for Linux/macOS environments.
+
+## Scripts
+
+| Script | Description |
+|--------|-------------|
+| *(none yet)* | |
+
+---
+
+## README Template
+
+When adding a new script, create `bash/<script-name>/README.md` using this structure:
+
+```markdown
+# script-name.sh
+
+One-line description of what the script does.
+
+## What It Does
+
+Short paragraph explaining the problem it solves and how it works.
+
+## Usage
+
+\`\`\`bash
+./script-name.sh [options]
+\`\`\`
+
+## Options
+
+| Flag | Argument | Description |
+|------|----------|-------------|
+| `-h` | | Show help and exit |
+
+## Examples
+
+\`\`\`bash
+# Example 1 description
+./script-name.sh --flag value
+
+# Example 2 description
+./script-name.sh --other-flag
+\`\`\`
+```
