@@ -6,7 +6,7 @@ PowerShell scripts for Windows and cross-platform environments.
 
 | Script | Description |
 |--------|-------------|
-| *(none yet)* | |
+| [Remove-AutodeskAEC](Remove-AutodeskAEC/) | Completely removes Autodesk AEC Collection products including registry, files, and licensing |
 
 ---
 
