@@ -106,12 +106,16 @@ function Remove-OldFiles {
     foreach ($f in $files) {
         try { Remove-Item $f.FullName -Force; $removed += $f.Length } catch {}
     }
-    # Remove empty directories
+    # Remove directories only if they are empty (avoids prompt on non-empty dirs)
     Get-ChildItem $Path -Recurse -Force | Where-Object { $_.PSIsContainer } |
         Sort-Object FullName -Descending |
-        ForEach-Object { try { Remove-Item $_.FullName -Force } catch {} }
+        ForEach-Object {
+            if (-not (Get-ChildItem $_.FullName -Force -ErrorAction SilentlyContinue)) {
+                try { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue } catch {}
+            }
+        }
 
-    Write-Log "Cleaned $Label: removed $([math]::Round($removed/1MB,2)) MB"
+    Write-Log "Cleaned ${Label}: removed $([math]::Round($removed/1MB,2)) MB"
     return $removed
 }
 
@@ -149,17 +153,56 @@ foreach ($target in $Targets) {
         'BrowserCache' {
             Get-ChildItem 'C:\Users' -Directory | ForEach-Object {
                 $user = $_.FullName
+                $userName = $_.Name
+
                 # Chrome
-                $freed += Remove-OldFiles "$user\AppData\Local\Google\Chrome\User Data\Default\Cache"     "Chrome Cache ($($_.Name))"
-                $freed += Remove-OldFiles "$user\AppData\Local\Google\Chrome\User Data\Default\Code Cache" "Chrome Code Cache ($($_.Name))"
+                $freed += Remove-OldFiles "$user\AppData\Local\Google\Chrome\User Data\Default\Cache"      "Chrome Cache ($userName)"
+                $freed += Remove-OldFiles "$user\AppData\Local\Google\Chrome\User Data\Default\Code Cache"  "Chrome Code Cache ($userName)"
+
                 # Edge
-                $freed += Remove-OldFiles "$user\AppData\Local\Microsoft\Edge\User Data\Default\Cache"     "Edge Cache ($($_.Name))"
-                $freed += Remove-OldFiles "$user\AppData\Local\Microsoft\Edge\User Data\Default\Code Cache" "Edge Code Cache ($($_.Name))"
-                # Firefox
+                $freed += Remove-OldFiles "$user\AppData\Local\Microsoft\Edge\User Data\Default\Cache"      "Edge Cache ($userName)"
+                $freed += Remove-OldFiles "$user\AppData\Local\Microsoft\Edge\User Data\Default\Code Cache"  "Edge Code Cache ($userName)"
+
+                # Brave
+                $freed += Remove-OldFiles "$user\AppData\Local\BraveSoftware\Brave-Browser\User Data\Default\Cache"      "Brave Cache ($userName)"
+                $freed += Remove-OldFiles "$user\AppData\Local\BraveSoftware\Brave-Browser\User Data\Default\Code Cache"  "Brave Code Cache ($userName)"
+
+                # Opera
+                $freed += Remove-OldFiles "$user\AppData\Roaming\Opera Software\Opera Stable\Cache"       "Opera Cache ($userName)"
+                $freed += Remove-OldFiles "$user\AppData\Local\Opera Software\Opera Stable\Cache"         "Opera Cache Local ($userName)"
+
+                # Opera GX
+                $freed += Remove-OldFiles "$user\AppData\Roaming\Opera Software\Opera GX Stable\Cache"    "Opera GX Cache ($userName)"
+                $freed += Remove-OldFiles "$user\AppData\Local\Opera Software\Opera GX Stable\Cache"      "Opera GX Cache Local ($userName)"
+
+                # Vivaldi
+                $freed += Remove-OldFiles "$user\AppData\Local\Vivaldi\User Data\Default\Cache"      "Vivaldi Cache ($userName)"
+                $freed += Remove-OldFiles "$user\AppData\Local\Vivaldi\User Data\Default\Code Cache"  "Vivaldi Code Cache ($userName)"
+
+                # Internet Explorer
+                $freed += Remove-OldFiles "$user\AppData\Local\Microsoft\Windows\INetCache"  "IE Cache ($userName)"
+
+                # Firefox (profile-based cache)
                 $ffProfiles = "$user\AppData\Local\Mozilla\Firefox\Profiles"
                 if (Test-Path $ffProfiles) {
                     Get-ChildItem $ffProfiles -Directory | ForEach-Object {
-                        $freed += Remove-OldFiles "$($_.FullName)\cache2" "Firefox Cache ($($_.Name))"
+                        $freed += Remove-OldFiles "$($_.FullName)\cache2" "Firefox Cache ($userName)"
+                    }
+                }
+
+                # Waterfox (Firefox-based)
+                $wfProfiles = "$user\AppData\Local\Waterfox\Profiles"
+                if (Test-Path $wfProfiles) {
+                    Get-ChildItem $wfProfiles -Directory | ForEach-Object {
+                        $freed += Remove-OldFiles "$($_.FullName)\cache2" "Waterfox Cache ($userName)"
+                    }
+                }
+
+                # LibreWolf (Firefox-based)
+                $lwProfiles = "$user\AppData\Local\LibreWolf\Profiles"
+                if (Test-Path $lwProfiles) {
+                    Get-ChildItem $lwProfiles -Directory | ForEach-Object {
+                        $freed += Remove-OldFiles "$($_.FullName)\cache2" "LibreWolf Cache ($userName)"
                     }
                 }
             }

@@ -4,7 +4,7 @@ Frees disk space by cleaning temp files, browser caches, and the Windows Update 
 
 ## What It Does
 
-Targets well-known temporary and cache directories across all user profiles on the machine: Windows Temp, user Temp folders, Prefetch, Chrome/Edge/Firefox caches, the Windows Update download cache, and the Recycle Bin. Cleans them silently and logs everything to a timestamped log file. Must be run as Administrator to access all locations.
+Targets well-known temporary and cache directories across all user profiles on the machine: Windows Temp, user Temp folders, Prefetch, browser caches (Chrome, Edge, Brave, Opera, Opera GX, Vivaldi, Firefox, Waterfox, LibreWolf, Internet Explorer), the Windows Update download cache, and the Recycle Bin. Cleans them silently and logs everything to a timestamped log file. Must be run as Administrator to access all locations.
 
 ## Usage
 
