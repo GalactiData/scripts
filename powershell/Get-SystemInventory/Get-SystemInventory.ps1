@@ -48,12 +48,14 @@ $ErrorActionPreference = 'SilentlyContinue'
 function Get-OsInfo {
     $os     = Get-CimInstance Win32_OperatingSystem
     $cs     = Get-CimInstance Win32_ComputerSystem
+    $bios   = Get-CimInstance Win32_BIOS
     $uptime = (Get-Date) - $os.LastBootUpTime
     [PSCustomObject]@{
-        ComputerName = $env:COMPUTERNAME
-        Manufacturer = $cs.Manufacturer
-        Model        = $cs.Model
-        Domain       = $cs.Domain
+        ComputerName  = $env:COMPUTERNAME
+        Manufacturer  = $cs.Manufacturer
+        Model         = $cs.Model
+        SerialNumber  = $bios.SerialNumber
+        Domain        = $cs.Domain
         OS           = $os.Caption
         Build        = $os.BuildNumber
         Version      = $os.Version
@@ -197,6 +199,7 @@ function Out-HtmlReport {
   <tr><th>Property</th><th>Value</th></tr>
   <tr><td>Manufacturer</td><td>$($Os.Manufacturer)</td></tr>
   <tr><td>Model</td><td>$($Os.Model)</td></tr>
+  <tr><td>Serial Number</td><td>$($Os.SerialNumber)</td></tr>
   <tr><td>Domain</td><td>$($Os.Domain)</td></tr>
   <tr><td>Operating System</td><td>$($Os.OS)</td></tr>
   <tr><td>Build</td><td>$($Os.Build)</td></tr>
