@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # system-inventory.sh — Collect a hardware and software inventory snapshot of a Linux machine.
 
-set -euo pipefail
+set -uo pipefail
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -146,13 +146,14 @@ if [[ "$FORMAT" == "csv" ]]; then
         while IFS= read -r line; do out "$line"; done
 else
     df -h --output=source,size,used,avail,pcent,target 2>/dev/null | \
-        grep -v '^tmpfs\|^devtmpfs\|^udev\|^none\|^overlay\|^squashfs\|^Filesystem'
+        grep -v '^tmpfs\|^devtmpfs\|^udev\|^none\|^overlay\|^squashfs\|^Filesystem' | \
+        while IFS= read -r line; do out "$line"; done || true
 fi
 
 # -- GPU --
 section "GPU"
 if command -v lspci &>/dev/null; then
-    gpus=$(lspci | grep -i 'vga\|3d\|display' 2>/dev/null)
+    gpus=$(lspci 2>/dev/null | grep -i 'vga\|3d\|display' || true)
     if [[ -n "$gpus" ]]; then
         while IFS= read -r gpu; do
             kv "GPU" "$(echo "$gpu" | sed 's/^[^ ]* //')"
