@@ -1,5 +1,7 @@
 # Scripts
 
+> **Disclaimer:** These scripts are provided as-is, without warranty of any kind. Use at your own risk. Always review a script and test in a non-production environment before running it. The authors are not responsible for any damage, data loss, or unintended consequences resulting from use.
+
 A collection of utility scripts organized by language/platform.
 
 ## Structure
