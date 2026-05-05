@@ -151,6 +151,32 @@ $script:RegistryKeys = @(
 )
 
 # ---------------------------------------------------------------------------
+# Progress helper — polls a process and shows an animated Write-Progress bar.
+# Returns the exit code. Use instead of -Wait so the console stays responsive.
+# ---------------------------------------------------------------------------
+function Wait-ProcessWithProgress {
+    param(
+        [System.Diagnostics.Process]$Process,
+        [string]$Activity
+    )
+    if (-not $Process) { return -1 }
+    $spinner = [char[]]@('|', '/', '-', '\')
+    $i = 0
+    try {
+        while (-not $Process.HasExited) {
+            Write-Progress -Activity $Activity `
+                           -Status "$($spinner[$i % 4]) Please wait..." `
+                           -PercentComplete ($i % 100)
+            $i++
+            Start-Sleep -Milliseconds 500
+        }
+    } finally {
+        Write-Progress -Activity $Activity -Completed
+    }
+    return $Process.ExitCode
+}
+
+# ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 function Write-Log {
@@ -279,33 +305,65 @@ $dirLines
 # ---------------------------------------------------------------------------
 function Stop-AutodeskProcesses {
     Write-Log "Stopping Autodesk processes..."
+
+    # Processes that hold file locks on AdODIS, AdskIdentityManager,
+    # AutoCAD Activity Insights, CER, and Desktop App directories.
     $procNames = @(
         'acad', 'accore', 'revit', 'navisworks', 'infraworks',
         'recap', 'Civil3D', 'AdAppMgr', 'AdSSO', 'ADSSO',
-        'AdskIdentityManager', 'AdskLicensingAgent'
+        'AdskIdentityManager', 'AdskLicensingAgent',
+        # ODIS / Autodesk Access
+        'AdskAccessCore', 'AdskAccessService', 'AdskAccessServiceHost',
+        'AdskAccessUIHost',
+        # AutoCAD Activity Insights
+        'AcEventSync', 'AcQMod',
+        # Customer Error Reporting service
+        'cer_service',
+        # Autodesk Desktop App manager
+        'AdAppMgrSvc', 'AdAutoUpdate'
     )
     foreach ($p in $procNames) {
         $procs = Get-Process -Name $p -ErrorAction SilentlyContinue
         if ($procs) {
             $procs | Stop-Process -Force -ErrorAction SilentlyContinue
+            # taskkill /F /T as a fallback for processes that resist Stop-Process
+            & taskkill /F /T /IM "$p.exe" 2>$null | Out-Null
             Write-Log "Stopped process: $p"
         }
     }
 
     Write-Log "Stopping Autodesk services..."
+
+    # Disable each service before stopping it so Windows cannot restart it
+    # between the Stop-Service call and the file-delete step that follows.
     $svcNames = @(
         'AdskLicensingService',
         'FlexNet Licensing Service 64',
         'FLEXnet Licensing Service',
-        'Autodesk Genuine Service'
+        'Autodesk Genuine Service',
+        'AutodeskGenuineService',
+        # ODIS daemon — runs as a Windows service independently of its .exe
+        'AdskAccessService',
+        # Autodesk Desktop App
+        'AdAppMgrSvc',
+        # AutoCAD Activity Insights
+        'AcEventSync',
+        # Customer Error Reporting
+        'AutodeskCER'
     )
     foreach ($s in $svcNames) {
         $svc = Get-Service -Name $s -ErrorAction SilentlyContinue
-        if ($svc -and $svc.Status -ne 'Stopped') {
-            Stop-Service -Name $s -Force -ErrorAction SilentlyContinue
-            Write-Log "Stopped service: $s"
+        if ($svc) {
+            Set-Service -Name $s -StartupType Disabled -ErrorAction SilentlyContinue
+            if ($svc.Status -ne 'Stopped') {
+                Stop-Service -Name $s -Force -ErrorAction SilentlyContinue
+                Write-Log "Stopped service: $s"
+            }
         }
     }
+
+    # Let Windows finish releasing file handles before deletion begins.
+    Start-Sleep -Seconds 3
 }
 
 # ---------------------------------------------------------------------------
@@ -343,8 +401,11 @@ function Invoke-AutodeskUninstall {
             return
         }
 
-        $proc = Start-Process -FilePath $exe -ArgumentList $args -Wait -PassThru -NoNewWindow
-        Write-Log "ODIS uninstall exit code: $($proc.ExitCode)"
+        # Inject -q for silent mode. Registry uninstall strings don't include it.
+        $silentArgs = ("-q $args").Trim()
+        $proc = Start-Process -FilePath $exe -ArgumentList $silentArgs -PassThru -NoNewWindow
+        $exitCode = Wait-ProcessWithProgress -Process $proc -Activity "Uninstalling $label"
+        Write-Log "ODIS uninstall exit code: $exitCode"
 
     } else {
         # Legacy MSI — extract GUID from PSChildName or UninstallString
@@ -360,9 +421,130 @@ function Invoke-AutodeskUninstall {
         }
 
         $msiArgs = "/X{$guid} /quiet /norestart /l*v `"$script:LogPath`""
-        $proc = Start-Process -FilePath 'msiexec.exe' -ArgumentList $msiArgs -Wait -PassThru -NoNewWindow
-        Write-Log "MSI uninstall exit code: $($proc.ExitCode)"
+        $proc = Start-Process -FilePath 'msiexec.exe' -ArgumentList $msiArgs -PassThru -NoNewWindow
+        $exitCode = Wait-ProcessWithProgress -Process $proc -Activity "Uninstalling $label (MSI)"
+        Write-Log "MSI uninstall exit code: $exitCode"
     }
+}
+
+# ---------------------------------------------------------------------------
+# Run RemoveODIS.exe — tears down the ODIS service and releases file locks
+# on AdODIS\V1\ so those directories can be deleted afterwards.
+# Must run after product uninstallers, before file deletion.
+# ---------------------------------------------------------------------------
+function Invoke-RemoveODIS {
+    $removeOdis = "$Drive\Program Files\Autodesk\AdODIS\V1\RemoveODIS.exe"
+
+    if (-not (Test-Path $removeOdis)) {
+        Write-Log "RemoveODIS.exe not found at '$removeOdis'. Skipping ODIS removal."
+        return
+    }
+
+    if ($WhatIf) {
+        Write-Log "WHATIF: Would run RemoveODIS.exe: $removeOdis"
+        return
+    }
+
+    Write-Log "Running RemoveODIS.exe to release ODIS file locks..."
+    $proc = Start-Process -FilePath $removeOdis -ArgumentList '--mode unattended' `
+                          -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+    $exitCode = Wait-ProcessWithProgress -Process $proc -Activity "Removing ODIS..."
+    Write-Log "RemoveODIS.exe exit code: $exitCode"
+
+    # Wait up to 60 s for the ODIS directory to clear
+    $elapsed = 0
+    $odisDir = "$Drive\Program Files\Autodesk\AdODIS"
+    while ($elapsed -lt 60 -and (Test-Path $odisDir) -and
+           (Get-ChildItem $odisDir -Recurse -ErrorAction SilentlyContinue)) {
+        Start-Sleep -Seconds 2
+        $elapsed += 2
+    }
+    Write-Log "ODIS removal complete."
+}
+
+# ---------------------------------------------------------------------------
+# Run AdskIdentityManager\uninstall.exe — releases Identity Manager file locks.
+# Must run after ODIS removal, before file deletion.
+# ---------------------------------------------------------------------------
+function Invoke-RemoveIdentityManager {
+    $idMgrRoot    = "$Drive\Program Files\Autodesk\AdskIdentityManager"
+    $uninstaller  = Join-Path $idMgrRoot 'uninstall.exe'
+
+    if (-not (Test-Path $uninstaller)) {
+        Write-Log "AdskIdentityManager uninstaller not found at '$uninstaller'. Skipping."
+        return
+    }
+
+    if ($WhatIf) {
+        Write-Log "WHATIF: Would run AdskIdentityManager uninstaller: $uninstaller"
+        return
+    }
+
+    Write-Log "Running AdskIdentityManager uninstaller..."
+    $proc = Start-Process -FilePath $uninstaller -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+    Wait-ProcessWithProgress -Process $proc -Activity "Removing Autodesk Identity Manager..." | Out-Null
+
+    # Wait up to 60 s for the directory to empty
+    $elapsed = 0
+    while ($elapsed -lt 60 -and (Test-Path $idMgrRoot) -and
+           (Get-ChildItem $idMgrRoot -Recurse -ErrorAction SilentlyContinue)) {
+        Start-Sleep -Seconds 2
+        $elapsed += 2
+    }
+
+    if (Test-Path $idMgrRoot) {
+        Write-Log "AdskIdentityManager directory still present after ${elapsed}s. Force-removing..." -Level 'WARN'
+        Remove-Item $idMgrRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    Write-Log "AdskIdentityManager removal complete."
+}
+
+# ---------------------------------------------------------------------------
+# Uninstall Autodesk Genuine Service — must be the very last step per
+# Autodesk's clean uninstall guide (after all other software, files, and
+# registry keys have been removed).
+# ---------------------------------------------------------------------------
+function Remove-GenuineService {
+    $hives = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+    )
+
+    $entry = $null
+    foreach ($hive in $hives) {
+        $entry = Get-ItemProperty $hive -ErrorAction SilentlyContinue |
+            Where-Object { $_.PSObject.Properties['DisplayName'] -and
+                           $_.DisplayName -like '*Autodesk Genuine*' } |
+            Select-Object -First 1
+        if ($entry) { break }
+    }
+
+    if (-not $entry) {
+        Write-Log "Autodesk Genuine Service not found in registry. Skipping."
+        return
+    }
+
+    if ($WhatIf) {
+        Write-Log "WHATIF: Would uninstall Autodesk Genuine Service"
+        return
+    }
+
+    Write-Log "Uninstalling Autodesk Genuine Service (final step)..."
+    $guid = $entry.PSChildName -replace '[{}]', ''
+    if ($guid -notmatch '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$') {
+        if ($entry.UninstallString -match '\{([0-9A-Fa-f-]{36})\}') {
+            $guid = $Matches[1]
+        } else {
+            Write-Log "Cannot determine GUID for Genuine Service. Skipping." -Level 'WARN'
+            return
+        }
+    }
+    $proc = Start-Process -FilePath 'msiexec.exe' `
+                          -ArgumentList "/X{$guid} /quiet /norestart" `
+                          -PassThru -NoNewWindow
+    $exitCode = Wait-ProcessWithProgress -Process $proc -Activity "Uninstalling Autodesk Genuine Service..."
+    Write-Log "Genuine Service uninstall exit code: $exitCode"
 }
 
 # ---------------------------------------------------------------------------
@@ -383,7 +565,8 @@ function Remove-AutodeskLicensing {
     }
 
     Write-Log "Removing Autodesk Desktop Licensing Service..."
-    Start-Process -FilePath $uninstaller -Wait -NoNewWindow
+    $proc = Start-Process -FilePath $uninstaller -PassThru -NoNewWindow
+    Wait-ProcessWithProgress -Process $proc -Activity "Removing Autodesk Desktop Licensing Service..." | Out-Null
 
     # Wait up to 60 s for the directory to empty
     $elapsed = 0
@@ -455,6 +638,7 @@ function Remove-AutodeskFiles {
     $dirs = [System.Collections.Generic.List[string]]::new()
     $dirs.AddRange([string[]]@(
         "$Drive\Program Files\Autodesk",
+        "$Drive\Program Files\Common Files\Autodesk Shared",
         "$Drive\Program Files (x86)\Autodesk",
         "$Drive\Program Files (x86)\Common Files\Autodesk Shared",
         "$Drive\ProgramData\Autodesk",
@@ -524,7 +708,8 @@ function Install-AutodeskProduct {
 
     $fileName = Split-Path $InstallerPath -Leaf
     $isOdis   = $fileName -eq 'Installer.exe'
-    $instArgs = if ($isOdis) { '--mode unattended' } else { '/quiet /norestart' }
+    # ODIS Installer.exe uses -q for fully silent; Setup.exe (updates) uses /quiet /norestart
+    $instArgs = if ($isOdis) { '-q' } else { '/quiet /norestart' }
 
     Write-Log "Starting install: $InstallerPath"
     Write-Log "Arguments: $instArgs"
@@ -534,13 +719,14 @@ function Install-AutodeskProduct {
         return
     }
 
-    $proc = Start-Process -FilePath $InstallerPath -ArgumentList $instArgs -Wait -PassThru -NoNewWindow
-    Write-Log "Install exit code: $($proc.ExitCode)"
+    $proc = Start-Process -FilePath $InstallerPath -ArgumentList $instArgs -PassThru -NoNewWindow
+    $exitCode = Wait-ProcessWithProgress -Process $proc -Activity "Installing $fileName..."
+    Write-Log "Install exit code: $exitCode"
 
-    if ($proc.ExitCode -eq 0) {
+    if ($exitCode -eq 0) {
         Write-Host "`n  Install completed successfully." -ForegroundColor Green
     } else {
-        Write-Log "Install returned non-zero exit code $($proc.ExitCode). Check the log for details." -Level 'WARN'
+        Write-Log "Install returned non-zero exit code $exitCode. Check the log for details." -Level 'WARN'
     }
 }
 
@@ -638,12 +824,22 @@ if ($targets.Count -gt 0 -and -not $WhatIf) {
 }
 
 # ── Execute ──────────────────────────────────────────────────────────────────
+# Autodesk clean uninstall order (per official guide):
+#   Step 1 — Uninstall all products except Genuine Service
+#             → Run RemoveODIS.exe
+#             → Run AdskLicensing uninstall.exe
+#   Step 2 — Run AdskIdentityManager uninstall.exe
+#   Step 3 — Delete files and folders
+#   Step 4 — Delete registry keys
+#   Step 5 — Uninstall Genuine Service (must be last)
 $failed = [System.Collections.Generic.List[string]]::new()
 
 if ($targets.Count -gt 0) {
     if (-not $WhatIf) { Stop-AutodeskProcesses }
 
+    # Step 1a: Uninstall all products except Genuine Service
     foreach ($t in $targets) {
+        if ($t.Name -like '*Genuine*') { continue }
         try {
             Invoke-AutodeskUninstall -Product $t
         } catch {
@@ -652,9 +848,23 @@ if ($targets.Count -gt 0) {
         }
     }
 
+    # Step 1b: RemoveODIS.exe — releases ODIS service file locks
+    Invoke-RemoveODIS
+
+    # Step 1c: AdskLicensing uninstall.exe
     Remove-AutodeskLicensing
-    Remove-AutodeskRegistry
+
+    # Step 2: AdskIdentityManager uninstall.exe — releases Identity Manager locks
+    Invoke-RemoveIdentityManager
+
+    # Step 3: Delete files and folders
     Remove-AutodeskFiles | Out-Null
+
+    # Step 4: Delete registry keys
+    Remove-AutodeskRegistry
+
+    # Step 5: Uninstall Genuine Service last
+    Remove-GenuineService
 }
 
 # Optional reinstall
