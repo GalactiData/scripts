@@ -181,7 +181,7 @@ function Get-InstalledAutodeskProducts {
 
     foreach ($hive in $hives) {
         $entries = Get-ItemProperty $hive -ErrorAction SilentlyContinue |
-            Where-Object { $_.Publisher -like '*Autodesk*' -and $_.DisplayName }
+            Where-Object { $_.PSObject.Properties['Publisher'] -and $_.Publisher -like '*Autodesk*' -and $_.PSObject.Properties['DisplayName'] -and $_.DisplayName }
 
         foreach ($entry in $entries) {
             $name = $entry.DisplayName
@@ -189,13 +189,14 @@ function Get-InstalledAutodeskProducts {
             $isAec = $script:AecKeywords | Where-Object { $name -like "*$_*" }
             if (-not $isAec) { continue }
             $null = $seen.Add($name)
-            $isOdis = ($entry.UninstallString -like '*AdODIS*') -or
-                      ($entry.UninstallString -like '*Installer.exe*' -and $entry.UninstallString -like '*uninstall*')
+            $uninstallStr = if ($entry.PSObject.Properties['UninstallString']) { $entry.UninstallString } else { '' }
+            $isOdis = ($uninstallStr -like '*AdODIS*') -or
+                      ($uninstallStr -like '*Installer.exe*' -and $uninstallStr -like '*uninstall*')
             $found.Add([PSCustomObject]@{
                 Name            = $name
                 Version         = $entry.DisplayVersion
                 GUID            = $entry.PSChildName
-                UninstallString = $entry.UninstallString
+                UninstallString = $uninstallStr
                 IsODIS          = [bool]$isOdis
             })
         }
@@ -609,7 +610,7 @@ if ($List) {
 $targets = [System.Collections.Generic.List[PSCustomObject]]::new()
 
 if ($All) {
-    $targets.AddRange($discovered)
+    $targets.AddRange([PSCustomObject[]]@($discovered))
 } elseif ($Products) {
     $notFound = [System.Collections.Generic.List[string]]::new()
     foreach ($p in $Products) {
