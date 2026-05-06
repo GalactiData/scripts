@@ -215,15 +215,29 @@ function Get-InstalledAutodeskProducts {
             $isAec = $script:AecKeywords | Where-Object { $name -like "*$_*" }
             if (-not $isAec) { continue }
             $null = $seen.Add($name)
-            $uninstallStr = if ($entry.PSObject.Properties['UninstallString']) { $entry.UninstallString } else { '' }
+            # Prefer UninstallString; fall back to QuietUninstallString for newer
+            # ODIS products (e.g. 2026) that leave UninstallString empty in the registry.
+            $uninstallStr   = ''
+            $silentIncluded = $false
+            if ($entry.PSObject.Properties['UninstallString'] -and $entry.UninstallString) {
+                $uninstallStr = [string]$entry.UninstallString
+            }
+            if (-not $uninstallStr -and
+                $entry.PSObject.Properties['QuietUninstallString'] -and
+                $entry.QuietUninstallString) {
+                $uninstallStr   = [string]$entry.QuietUninstallString
+                $silentIncluded = $true
+            }
             $isOdis = ($uninstallStr -like '*AdODIS*') -or
-                      ($uninstallStr -like '*Installer.exe*' -and $uninstallStr -like '*uninstall*')
+                      ($uninstallStr -like '*Installer.exe*' -and $uninstallStr -like '*uninstall*') -or
+                      ($uninstallStr -like '*--extension_manifest*')
             $found.Add([PSCustomObject]@{
                 Name            = $name
                 Version         = $entry.DisplayVersion
                 GUID            = $entry.PSChildName
                 UninstallString = $uninstallStr
                 IsODIS          = [bool]$isOdis
+                SilentIncluded  = $silentIncluded
             })
         }
     }
@@ -386,11 +400,11 @@ function Invoke-AutodeskUninstall {
     if ($Product.IsODIS) {
         $raw = $Product.UninstallString.Trim()
         if ($raw -match '^"([^"]+)"\s*(.*)$') {
-            $exe  = $Matches[1]
-            $args = $Matches[2].Trim()
+            $exe      = $Matches[1]
+            $odisArgs = $Matches[2].Trim()
         } elseif ($raw -match '^(.*?\.exe)\s*(.*)$') {
-            $exe  = $Matches[1]
-            $args = $Matches[2].Trim()
+            $exe      = $Matches[1]
+            $odisArgs = $Matches[2].Trim()
         } else {
             Write-Log "Cannot parse UninstallString for $label. Skipping." -Level 'WARN'
             $script:SkippedProducts.Add($label)
@@ -403,8 +417,9 @@ function Invoke-AutodeskUninstall {
             return
         }
 
-        # Inject -q for silent mode. Registry uninstall strings don't include it.
-        $silentArgs = ("-q $args").Trim()
+        # Inject -q for silent mode unless the string came from QuietUninstallString
+        # (which already has -q baked in).
+        $silentArgs = if ($Product.SilentIncluded) { $odisArgs } else { ("-q $odisArgs").Trim() }
         $proc = Start-Process -FilePath $exe -ArgumentList $silentArgs -PassThru -NoNewWindow
         $exitCode = Wait-ProcessWithProgress -Process $proc -Activity "Uninstalling $label"
         Write-Log "ODIS uninstall exit code: $exitCode"
