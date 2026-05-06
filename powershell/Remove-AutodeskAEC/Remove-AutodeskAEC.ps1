@@ -228,6 +228,26 @@ function Get-InstalledAutodeskProducts {
                 $uninstallStr   = [string]$entry.QuietUninstallString
                 $silentIncluded = $true
             }
+            # Final fallback: scan the ODIS metadata directory for a manifest whose
+            # content references this product's display name. Autodesk 2026 products
+            # sometimes register in the Windows uninstall hive without populating
+            # UninstallString or QuietUninstallString.
+            if (-not $uninstallStr) {
+                $odisExe      = "$Drive\Program Files\Autodesk\AdODIS\V1\Installer.exe"
+                $metadataRoot = "$Drive\ProgramData\Autodesk\ODIS\metadata"
+                if ((Test-Path $odisExe) -and (Test-Path $metadataRoot)) {
+                    $manifests = Get-ChildItem $metadataRoot -Filter 'manifest.xcd' -Recurse -Depth 2 -ErrorAction SilentlyContinue
+                    foreach ($m in $manifests) {
+                        try {
+                            $content = Get-Content $m.FullName -Raw -ErrorAction Stop
+                            if ($content.Contains($name)) {
+                                $uninstallStr = "`"$odisExe`" -i uninstall --trigger_point system -m `"$($m.FullName)`""
+                                break
+                            }
+                        } catch { }
+                    }
+                }
+            }
             $isOdis = ($uninstallStr -like '*AdODIS*') -or
                       ($uninstallStr -like '*Installer.exe*' -and $uninstallStr -like '*uninstall*') -or
                       ($uninstallStr -like '*--extension_manifest*')
