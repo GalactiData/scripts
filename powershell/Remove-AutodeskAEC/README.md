@@ -77,6 +77,7 @@ Command-line arguments always override anything set in `$Config`, so a pre-confi
 
 - The script always writes a log. If `-LogPath` is not specified, the log is created automatically in `%TEMP%` and its path is printed at startup.
 - Before any destructive action, the script displays a full list of products, registry keys, and directories to be removed, followed by a warning that the action is irreversible. You must type `YES` exactly to proceed (bypassed by `-Force`).
+- If any product uninstall is skipped (installer not found, GUID missing) or fails, the script aborts before deleting any files or registry keys. Products that were not properly uninstalled are listed. Resolve them manually and re-run.
 - The script removes only Autodesk-owned files in `ProgramData\FLEXnet` (files matching `adsk*`). The FLEXnet directory itself is preserved as it may be shared with other software (e.g. Adobe).
 - `-BackupRegistry` creates one `.reg` file per registry key, placed in the same directory as the log file.
 - Products covered include: AutoCAD (all toolsets), Civil 3D, Revit, Navisworks, InfraWorks, ReCap Pro, Robot Structural Analysis, Advance Steel, Fabrication CADmep, FormIt, 3ds Max, Vehicle Tracking, Structural Bridge Design, Dynamo, and Autodesk shared components.

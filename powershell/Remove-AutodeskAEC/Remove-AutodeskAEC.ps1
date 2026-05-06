@@ -257,26 +257,26 @@ function Confirm-Proceed {
 
     $summary = @"
 
-  ┌─ PRODUCTS TO UNINSTALL ($($TargetProducts.Count)) ──────────────────────────────
+  == PRODUCTS TO UNINSTALL ($($TargetProducts.Count)) ==
 $productLines
 
-  ├─ REGISTRY KEYS TO DELETE ─────────────────────────────────────
+  == REGISTRY KEYS TO DELETE ==
 $regLines
 
-  ├─ DIRECTORIES TO REMOVE ───────────────────────────────────────
+  == DIRECTORIES TO REMOVE ==
 $dirLines
 
-  └─ LOG FILE ────────────────────────────────────────────────────
+  == LOG FILE ==
     $script:LogPath
 "@
 
     $banner = @"
 
-  ╔══════════════════════════════════════════════════════════════╗
-  ║   WARNING: THE FOLLOWING ACTIONS ARE IRREVERSIBLE.          ║
-  ║   Once confirmed, there is no stopping or rolling back.     ║
-  ║   Review the list above carefully before continuing.        ║
-  ╚══════════════════════════════════════════════════════════════╝
+  ================================================================
+  WARNING: THE FOLLOWING ACTIONS ARE IRREVERSIBLE.
+  Once confirmed, there is no stopping or rolling back.
+  Review the list above carefully before continuing.
+  ================================================================
 "@
 
     Write-Host $summary
@@ -349,7 +349,7 @@ function Stop-AutodeskProcesses {
         # AutoCAD Activity Insights
         'AcEventSync',
         # Customer Error Reporting
-        'AutodeskCER'
+        'Autodesk CER Service'
     )
     foreach ($s in $svcNames) {
         $svc = Get-Service -Name $s -ErrorAction SilentlyContinue
@@ -388,16 +388,18 @@ function Invoke-AutodeskUninstall {
         if ($raw -match '^"([^"]+)"\s*(.*)$') {
             $exe  = $Matches[1]
             $args = $Matches[2].Trim()
-        } elseif ($raw -match '^(\S+)\s*(.*)$') {
+        } elseif ($raw -match '^(.*?\.exe)\s*(.*)$') {
             $exe  = $Matches[1]
             $args = $Matches[2].Trim()
         } else {
             Write-Log "Cannot parse UninstallString for $label. Skipping." -Level 'WARN'
+            $script:SkippedProducts.Add($label)
             return
         }
 
         if (-not (Test-Path $exe)) {
             Write-Log "ODIS installer not found at '$exe'. Skipping." -Level 'WARN'
+            $script:SkippedProducts.Add($label)
             return
         }
 
@@ -416,6 +418,7 @@ function Invoke-AutodeskUninstall {
                 $guid = $Matches[1]
             } else {
                 Write-Log "Cannot determine GUID for $label. Skipping." -Level 'WARN'
+                $script:SkippedProducts.Add($label)
                 return
             }
         }
@@ -481,7 +484,7 @@ function Invoke-RemoveIdentityManager {
     }
 
     Write-Log "Running AdskIdentityManager uninstaller..."
-    $proc = Start-Process -FilePath $uninstaller -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+    $proc = Start-Process -FilePath $uninstaller -ArgumentList '--mode unattended' -PassThru -NoNewWindow -ErrorAction SilentlyContinue
     Wait-ProcessWithProgress -Process $proc -Activity "Removing Autodesk Identity Manager..." | Out-Null
 
     # Wait up to 60 s for the directory to empty
@@ -565,7 +568,7 @@ function Remove-AutodeskLicensing {
     }
 
     Write-Log "Removing Autodesk Desktop Licensing Service..."
-    $proc = Start-Process -FilePath $uninstaller -PassThru -NoNewWindow
+    $proc = Start-Process -FilePath $uninstaller -ArgumentList '--mode unattended' -PassThru -NoNewWindow
     Wait-ProcessWithProgress -Process $proc -Activity "Removing Autodesk Desktop Licensing Service..." | Out-Null
 
     # Wait up to 60 s for the directory to empty
@@ -707,9 +710,15 @@ function Install-AutodeskProduct {
     }
 
     $fileName = Split-Path $InstallerPath -Leaf
-    $isOdis   = $fileName -eq 'Installer.exe'
-    # ODIS Installer.exe uses -q for fully silent; Setup.exe (updates) uses /quiet /norestart
-    $instArgs = if ($isOdis) { '-q' } else { '/quiet /norestart' }
+    # Autodesk silent install flags per installer type:
+    #   Installer.exe  — ODIS main product bundle       → -q
+    #   Setup.exe      — extracted update package        → --silent
+    #   *.exe (other)  — ODIS update exe (e.g. AutoCAD_2023.1.2_Update.exe) → -q
+    $instArgs = switch ($fileName) {
+        'Installer.exe' { '-q' }
+        'Setup.exe'     { '--silent' }
+        default         { '-q' }
+    }
 
     Write-Log "Starting install: $InstallerPath"
     Write-Log "Arguments: $instArgs"
@@ -832,7 +841,8 @@ if ($targets.Count -gt 0 -and -not $WhatIf) {
 #   Step 3 — Delete files and folders
 #   Step 4 — Delete registry keys
 #   Step 5 — Uninstall Genuine Service (must be last)
-$failed = [System.Collections.Generic.List[string]]::new()
+$failed  = [System.Collections.Generic.List[string]]::new()
+$script:SkippedProducts = [System.Collections.Generic.List[string]]::new()
 
 if ($targets.Count -gt 0) {
     if (-not $WhatIf) { Stop-AutodeskProcesses }
@@ -846,6 +856,40 @@ if ($targets.Count -gt 0) {
             Write-Log "Error uninstalling '$($t.Name)': $_" -Level 'ERROR'
             $failed.Add($t.Name)
         }
+    }
+
+    # Abort before any destructive cleanup if products were skipped or failed.
+    # Deleting files and registry while products are still registered would leave
+    # them in a broken, unremovable state.
+    if (-not $WhatIf -and ($script:SkippedProducts.Count -gt 0 -or $failed.Count -gt 0)) {
+        Write-Host ""
+        Write-Host "  ==============================================" -ForegroundColor Yellow
+        Write-Host "  CLEANUP ABORTED - INCOMPLETE UNINSTALL" -ForegroundColor Yellow
+        Write-Host "  ==============================================" -ForegroundColor Yellow
+        Write-Log "Aborting: $($script:SkippedProducts.Count) skipped, $($failed.Count) failed. File and registry cleanup will NOT run." -Level 'WARN'
+        if ($script:SkippedProducts.Count -gt 0) {
+            Write-Host "`n  Skipped (installer not found or GUID missing):" -ForegroundColor Yellow
+            $script:SkippedProducts | ForEach-Object {
+                Write-Host "    - $_" -ForegroundColor Yellow
+                Write-Log "  Skipped: $_" -Level 'WARN'
+            }
+        }
+        if ($failed.Count -gt 0) {
+            Write-Host "`n  Failed (uninstaller error):" -ForegroundColor Red
+            $failed | ForEach-Object { Write-Host "    - $_" -ForegroundColor Red }
+        }
+        Write-Host "`n  Resolve the above items, then re-run the script.`n" -ForegroundColor Yellow
+        Write-Host "  ==============================================" -ForegroundColor Cyan
+        Write-Host "  SUMMARY"
+        Write-Host "  ==============================================" -ForegroundColor Cyan
+        Write-Host "  Products targeted  : $($targets.Count)"
+        Write-Host "  Products skipped   : $($script:SkippedProducts.Count)" -ForegroundColor Yellow
+        Write-Host "  Products failed    : $($failed.Count)" -ForegroundColor Red
+        Write-Host "  File/registry cleanup : ABORTED" -ForegroundColor Yellow
+        Write-Host "  Log                : $script:LogPath"
+        Write-Host "  ==============================================`n" -ForegroundColor Cyan
+        Write-Log "Script complete. Targeted=$($targets.Count) Skipped=$($script:SkippedProducts.Count) Failed=$($failed.Count) CleanupAborted=True"
+        exit 1
     }
 
     # Step 1b: RemoveODIS.exe — releases ODIS service file locks
@@ -876,15 +920,19 @@ if ($Install) {
 # ── Summary ───────────────────────────────────────────────────────────────────
 $mode = if ($WhatIf) { ' (WhatIf - no changes made)' } else { '' }
 Write-Host ""
-Write-Host "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host "  ==============================================" -ForegroundColor Cyan
 Write-Host "  SUMMARY$mode"
-Write-Host "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host "  ==============================================" -ForegroundColor Cyan
 Write-Host "  Products targeted : $($targets.Count)"
+Write-Host "  Products skipped  : $($script:SkippedProducts.Count)"
 Write-Host "  Products failed   : $($failed.Count)"
+if ($script:SkippedProducts.Count -gt 0) {
+    $script:SkippedProducts | ForEach-Object { Write-Host "    - $_" -ForegroundColor Yellow }
+}
 if ($failed.Count -gt 0) {
     $failed | ForEach-Object { Write-Host "    - $_" -ForegroundColor Red }
 }
 Write-Host "  Log               : $script:LogPath"
-Write-Host "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`n" -ForegroundColor Cyan
+Write-Host "  ==============================================`n" -ForegroundColor Cyan
 
-Write-Log "Script complete. Targeted=$($targets.Count) Failed=$($failed.Count)"
+Write-Log "Script complete. Targeted=$($targets.Count) Skipped=$($script:SkippedProducts.Count) Failed=$($failed.Count)"
