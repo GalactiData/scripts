@@ -132,6 +132,8 @@ $script:AecKeywords = @(
     'Vehicle Tracking',
     'Structural Bridge Design',
     'Dynamo',
+    'RealDWG',
+    'Interoperability Engine',
     'Autodesk Rendering',
     'Autodesk Access',
     'Autodesk Desktop App',
@@ -202,8 +204,10 @@ function Get-InstalledAutodeskProducts {
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
         'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
     )
-    $found = [System.Collections.Generic.List[PSCustomObject]]::new()
-    $seen  = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    # Keyed by DisplayName so a later entry with a real UninstallString can
+    # replace an earlier bare-MSI component entry for the same product.
+    $byName = [System.Collections.Generic.Dictionary[string, PSCustomObject]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase)
 
     foreach ($hive in $hives) {
         $entries = Get-ItemProperty $hive -ErrorAction SilentlyContinue |
@@ -211,12 +215,9 @@ function Get-InstalledAutodeskProducts {
 
         foreach ($entry in $entries) {
             $name = $entry.DisplayName
-            if ($seen.Contains($name)) { continue }
             $isAec = $script:AecKeywords | Where-Object { $name -like "*$_*" }
             if (-not $isAec) { continue }
-            $null = $seen.Add($name)
-            # Prefer UninstallString; fall back to QuietUninstallString for newer
-            # ODIS products (e.g. 2026) that leave UninstallString empty in the registry.
+
             $uninstallStr   = ''
             $silentIncluded = $false
             if ($entry.PSObject.Properties['UninstallString'] -and $entry.UninstallString) {
@@ -228,39 +229,61 @@ function Get-InstalledAutodeskProducts {
                 $uninstallStr   = [string]$entry.QuietUninstallString
                 $silentIncluded = $true
             }
-            # Final fallback: scan the ODIS metadata directory for a manifest whose
-            # content references this product's display name. Autodesk 2026 products
-            # sometimes register in the Windows uninstall hive without populating
-            # UninstallString or QuietUninstallString.
+
+            # If we already have this product with a working UninstallString, skip
+            # this entry — it's a duplicate bare-MSI component registration.
+            if ($byName.ContainsKey($name) -and $byName[$name].UninstallString) { continue }
+
+            # ODIS GUID-based fallback: Autodesk 2026 products sometimes have a bare
+            # MSI component entry (no UninstallString) alongside the real ODIS entry.
+            # If we still have no string, look for the GUID's metadata folder directly.
             if (-not $uninstallStr) {
-                $odisExe      = "$Drive\Program Files\Autodesk\AdODIS\V1\Installer.exe"
-                $metadataRoot = "$Drive\ProgramData\Autodesk\ODIS\metadata"
-                if ((Test-Path $odisExe) -and (Test-Path $metadataRoot)) {
-                    $manifests = Get-ChildItem $metadataRoot -Filter 'manifest.xcd' -Recurse -Depth 2 -ErrorAction SilentlyContinue
-                    foreach ($m in $manifests) {
-                        try {
-                            $content = Get-Content $m.FullName -Raw -ErrorAction Stop
-                            if ($content.Contains($name)) {
-                                $uninstallStr = "`"$odisExe`" -i uninstall --trigger_point system -m `"$($m.FullName)`""
-                                break
-                            }
-                        } catch { }
+                $odisExe  = "$Drive\Program Files\Autodesk\AdODIS\V1\Installer.exe"
+                $metaBase = "$Drive\ProgramData\Autodesk\ODIS\metadata"
+                $guid     = $entry.PSChildName
+                $metaDir  = Join-Path $metaBase $guid
+
+                if ((Test-Path $odisExe) -and (Test-Path $metaDir)) {
+                    $bundleManifest = Join-Path $metaDir 'bundleManifest.xml'
+                    $setupXml       = Join-Path $metaDir 'setup.xml'
+                    $xsdPath        = Join-Path $metaDir 'SetupRes\manifest.xsd'
+                    $extManifest    = Join-Path $metaDir 'setup_ext.xml'
+                    $extXsd         = Join-Path $metaDir 'SetupRes\manifest_ext.xsd'
+
+                    if (Test-Path $bundleManifest) {
+                        # Main bundle — full argument set matching registry format
+                        $uninstallStr = "`"$odisExe`" -i uninstall --trigger_point system" +
+                            " -m `"$bundleManifest`" -x `"$xsdPath`"" +
+                            " --extension_manifest `"$extManifest`"" +
+                            " --extension_manifest_xsd `"$extXsd`""
+                    } elseif (Test-Path $setupXml) {
+                        # Package component (e.g. Autodesk Access)
+                        $pkgXsd = "$Drive\Program Files\Autodesk\AdODIS\V1\SetupRes\manifest.xsd"
+                        $uninstallStr = "`"$odisExe`" -i uninstall --trigger_point system" +
+                            " -m `"$setupXml`" -x `"$pkgXsd`" --manifest_type package"
                     }
                 }
             }
+
+            if (-not $uninstallStr) {
+                Write-Log "No uninstall method found for '$name' (GUID: $($entry.PSChildName)) — skipping." -Level 'WARN'
+            }
+
             $isOdis = ($uninstallStr -like '*AdODIS*') -or
                       ($uninstallStr -like '*Installer.exe*' -and $uninstallStr -like '*uninstall*') -or
                       ($uninstallStr -like '*--extension_manifest*')
-            $found.Add([PSCustomObject]@{
+            $byName[$name] = [PSCustomObject]@{
                 Name            = $name
-                Version         = $entry.DisplayVersion
+                Version         = if ($entry.PSObject.Properties['DisplayVersion']) { $entry.DisplayVersion } else { $null }
                 GUID            = $entry.PSChildName
                 UninstallString = $uninstallStr
                 IsODIS          = [bool]$isOdis
                 SilentIncluded  = $silentIncluded
-            })
+            }
         }
     }
+    $found = [System.Collections.Generic.List[PSCustomObject]]::new()
+    foreach ($v in $byName.Values) { $found.Add($v) }
     return $found
 }
 
@@ -458,7 +481,9 @@ function Invoke-AutodeskUninstall {
             }
         }
 
-        $msiArgs = "/X{$guid} /quiet /norestart /l*v `"$script:LogPath`""
+        $msiLog  = Join-Path ([System.IO.Path]::GetDirectoryName($script:LogPath)) `
+                             ([System.IO.Path]::GetFileNameWithoutExtension($script:LogPath) + "_msi_$guid.log")
+        $msiArgs = "/X{$guid} /quiet /norestart /l*v `"$msiLog`""
         $proc = Start-Process -FilePath 'msiexec.exe' -ArgumentList $msiArgs -PassThru -NoNewWindow
         $exitCode = Wait-ProcessWithProgress -Process $proc -Activity "Uninstalling $label (MSI)"
         Write-Log "MSI uninstall exit code: $exitCode"
