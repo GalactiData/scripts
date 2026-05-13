@@ -88,7 +88,8 @@ fi
 # Logging
 # ---------------------------------------------------------------------------
 log() {
-    local msg="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+    local msg
+    msg="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
     [[ -n "$LOG_FILE" ]] && echo "$msg" >> "$LOG_FILE"
 }
 
@@ -143,7 +144,7 @@ HOSTNAME=$(hostname -f 2>/dev/null || hostname)
 
 echo ""
 printf "${CYAN}  Service Health Check — %s — %s${RESET}\n" "$HOSTNAME" "$TIMESTAMP"
-[[ "$AUTO_RESTART" == true ]] && printf "${YELLOW}  Auto-restart: ENABLED${RESET}\n"
+[[ "$AUTO_RESTART" == true ]] && printf '%s  Auto-restart: ENABLED%s\n' "$YELLOW" "$RESET"
 echo "  $(printf '%.0s─' {1..60})"
 printf "  %-16s  %s\n" "STATUS" "SERVICE"
 echo "  $(printf '%.0s─' {1..60})"

@@ -156,7 +156,7 @@ if command -v lspci &>/dev/null; then
     gpus=$(lspci 2>/dev/null | grep -i 'vga\|3d\|display' || true)
     if [[ -n "$gpus" ]]; then
         while IFS= read -r gpu; do
-            kv "GPU" "$(echo "$gpu" | sed 's/^[^ ]* //')"
+            kv "GPU" "${gpu#* }"
         done <<< "$gpus"
     else
         kv "GPU" "Not detected"

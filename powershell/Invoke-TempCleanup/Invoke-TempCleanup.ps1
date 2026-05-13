@@ -1,4 +1,4 @@
-#Requires -RunAsAdministrator
+﻿#Requires -RunAsAdministrator
 #Requires -Version 5.1
 
 <#
@@ -104,14 +104,14 @@ function Remove-OldFiles {
 
     $removed = 0
     foreach ($f in $files) {
-        try { Remove-Item $f.FullName -Force; $removed += $f.Length } catch {}
+        try { Remove-Item $f.FullName -Force; $removed += $f.Length } catch { Write-Log "Skipped locked file: $($f.Name)" }
     }
     # Remove directories only if they are empty (avoids prompt on non-empty dirs)
     Get-ChildItem $Path -Recurse -Force | Where-Object { $_.PSIsContainer } |
         Sort-Object FullName -Descending |
         ForEach-Object {
             if (-not (Get-ChildItem $_.FullName -Force -ErrorAction SilentlyContinue)) {
-                try { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue } catch {}
+                Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
             }
         }
 

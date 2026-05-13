@@ -691,7 +691,7 @@ function Remove-AutodeskRegistry {
                 $backupFile = Join-Path $logDir "$logBase-registry-backup-$keyIndex.reg"
                 $regPath    = $key -replace 'HKLM:\\', 'HKEY_LOCAL_MACHINE\' `
                                    -replace 'HKCU:\\', 'HKEY_CURRENT_USER\'
-                $result = & reg export $regPath $backupFile /y 2>&1
+                $null = & reg export $regPath $backupFile /y 2>&1
                 Write-Log "Backup: $key -> $backupFile"
             }
         }
