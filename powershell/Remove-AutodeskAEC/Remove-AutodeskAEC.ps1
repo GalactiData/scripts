@@ -140,7 +140,11 @@ $script:AecKeywords = @(
     'Autodesk Single Sign On',
     'Autodesk Identity Manager',
     'Autodesk Licensing',
-    'Autodesk Genuine Service'
+    'Autodesk Genuine Service',
+    'Autodesk App Manager',
+    'Autodesk Batch Save Utility',
+    'Autodesk Featured Apps',
+    'Autodesk Save to Web and Mobile'
 )
 
 # Registry keys targeted for removal
@@ -560,6 +564,27 @@ function Invoke-RemoveIdentityManager {
         Remove-Item $idMgrRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 
+    # Remove orphaned Add/Remove Programs entries.  These can persist when the
+    # product's own uninstaller was never reached (e.g. because a prior run
+    # aborted) or when ODIS silently removed the files but left the registry key.
+    $idMgrHives = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+    )
+    foreach ($hive in $idMgrHives) {
+        Get-ItemProperty $hive -ErrorAction SilentlyContinue |
+            Where-Object { $_.PSObject.Properties['DisplayName'] -and
+                           $_.DisplayName -like '*Autodesk Identity Manager*' } |
+            ForEach-Object {
+                if ($WhatIf) {
+                    Write-Log "WHATIF: Would remove Identity Manager uninstall registry entry: $($_.PSChildName)"
+                } else {
+                    Remove-Item $_.PSPath -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Log "Removed Identity Manager uninstall registry entry: $($_.PSChildName)"
+                }
+            }
+    }
+
     Write-Log "AdskIdentityManager removal complete."
 }
 
@@ -907,9 +932,14 @@ $script:SkippedProducts = [System.Collections.Generic.List[string]]::new()
 if ($targets.Count -gt 0) {
     if (-not $WhatIf) { Stop-AutodeskProcesses }
 
-    # Step 1a: Uninstall all products except Genuine Service
+    # Step 1a: Uninstall all products except those with dedicated removal steps.
+    # Genuine Service must be last (per Autodesk's clean uninstall guide).
+    # Identity Manager is handled by Invoke-RemoveIdentityManager in step 2;
+    # its UninstallString is a plain EXE with no MSI GUID, so it would always
+    # fail the GUID check and abort cleanup if included here.
     foreach ($t in $targets) {
         if ($t.Name -like '*Genuine*') { continue }
+        if ($t.Name -like '*Identity Manager*') { continue }
         try {
             Invoke-AutodeskUninstall -Product $t
         } catch {
