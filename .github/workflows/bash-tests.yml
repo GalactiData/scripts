@@ -1,0 +1,33 @@
+name: Bash Tests
+
+on:
+  push:
+    paths:
+      - 'bash/**'
+      - 'tests/bash/**'
+      - '.github/workflows/bash-tests.yml'
+  pull_request:
+    paths:
+      - 'bash/**'
+      - 'tests/bash/**'
+      - '.github/workflows/bash-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ShellCheck
+        run: find bash -name '*.sh' -exec shellcheck {} +
+
+  bats:
+    name: Bats
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Bats
+        run: sudo apt-get install -y bats
+      - name: Run Bats tests
+        run: bats tests/bash/
