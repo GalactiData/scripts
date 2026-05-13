@@ -1,4 +1,4 @@
-#Requires -RunAsAdministrator
+﻿#Requires -RunAsAdministrator
 #Requires -Version 5.1
 
 <#
@@ -266,7 +266,7 @@ function Get-InstalledAutodeskProducts {
             }
 
             if (-not $uninstallStr) {
-                Write-Log "No uninstall method found for '$name' (GUID: $($entry.PSChildName)) — skipping." -Level 'WARN'
+                Write-Log "No uninstall method found for '$name' (GUID: $($entry.PSChildName)) - skipping." -Level 'WARN'
             }
 
             $isOdis = ($uninstallStr -like '*AdODIS*') -or
