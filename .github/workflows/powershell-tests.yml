@@ -20,7 +20,7 @@ jobs:
     name: PSScriptAnalyzer
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install PSScriptAnalyzer
         shell: pwsh
         run: Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
@@ -40,7 +40,7 @@ jobs:
     name: Pester
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install Pester
         shell: pwsh
         run: Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.0
