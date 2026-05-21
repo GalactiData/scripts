@@ -4,7 +4,7 @@ Completely removes Autodesk AEC Collection products from a Windows machine, incl
 
 ## What It Does
 
-Scans the Windows registry to detect installed Autodesk AEC Collection products (2019–2027), then — after showing a full pre-flight summary and requiring explicit confirmation — follows Autodesk's official 5-step clean uninstall sequence: silently uninstalls all products via ODIS (2022+) or MSI (legacy), runs `RemoveODIS.exe` and the AdskIdentityManager uninstaller to release locked files, removes the Autodesk Desktop Licensing Service, deletes all leftover directories across Program Files, ProgramData, and all user profiles, removes Autodesk registry keys, and finally uninstalls the Autodesk Genuine Service last (as required by Autodesk). An animated progress bar shows during each long-running step. A timestamped log is always written automatically.
+Scans the Windows registry to detect installed Autodesk AEC Collection products (2019–2027), then — after showing a full pre-flight summary and requiring explicit confirmation — follows Autodesk's official 5-step clean uninstall sequence: silently uninstalls all products via ODIS (2022+) or MSI (legacy), runs `RemoveODIS.exe` and the AdskIdentityManager uninstaller to release locked files, removes the Autodesk Desktop Licensing Service, deletes all leftover directories across Program Files, ProgramData, and all user profiles (including Autodesk-named install residue in each user's `%TEMP%` folder), removes Autodesk registry keys, and finally uninstalls the Autodesk Genuine Service last (as required by Autodesk). An animated progress bar shows during each long-running step. A timestamped log is always written automatically.
 
 ## Usage
 

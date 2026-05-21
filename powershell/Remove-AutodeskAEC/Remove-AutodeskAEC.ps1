@@ -255,11 +255,15 @@ function Get-InstalledAutodeskProducts {
                     $extXsd         = Join-Path $metaDir 'SetupRes\manifest_ext.xsd'
 
                     if (Test-Path $bundleManifest) {
-                        # Main bundle — full argument set matching registry format
+                        # Main bundle — match the registry-format uninstall string.
                         $uninstallStr = "`"$odisExe`" -i uninstall --trigger_point system" +
-                            " -m `"$bundleManifest`" -x `"$xsdPath`"" +
-                            " --extension_manifest `"$extManifest`"" +
-                            " --extension_manifest_xsd `"$extXsd`""
+                            " -m `"$bundleManifest`" -x `"$xsdPath`""
+                        # Only add extension-manifest args when the files exist on
+                        # disk — passing nonexistent paths makes Installer.exe abort.
+                        if ((Test-Path $extManifest) -and (Test-Path $extXsd)) {
+                            $uninstallStr += " --extension_manifest `"$extManifest`"" +
+                                             " --extension_manifest_xsd `"$extXsd`""
+                        }
                     } elseif (Test-Path $setupXml) {
                         # Package component (e.g. Autodesk Access)
                         $pkgXsd = "$Drive\Program Files\Autodesk\AdODIS\V1\SetupRes\manifest.xsd"
@@ -312,6 +316,7 @@ function Confirm-Proceed {
         "$Drive\Users\*\AppData\Roaming\Autodesk",
         "$Drive\Users\*\AppData\Local\Autodesk",
         "$Drive\Users\*\AppData\LocalLow\Autodesk",
+        "$Drive\Users\*\AppData\Local\Temp\<Autodesk-named items> (files only)",
         "$Drive\ProgramData\FLEXnet\adsk* (files only)"
     )
     $dirLines = ($baseDirs | ForEach-Object { "    - $_" }) -join "`n"
@@ -743,9 +748,20 @@ function Remove-AutodeskFiles {
         }
     }
 
+    # Per-user Temp folder — only Autodesk-named items (Step 3.1 of the official
+    # clean-uninstall guide). Limited to AEC/Autodesk patterns so we don't blow
+    # away unrelated apps' install state.
+    $tempPatterns = @(
+        'Autodesk*', 'AdODIS*', 'AdAppMgr*', 'AdskIdentityManager*',
+        'AdskLicensing*', 'AcEventSync*', 'Revit*', 'AutoCAD*',
+        'acad*', 'Civil3D*', 'C3D*', 'Navisworks*', 'InfraWorks*',
+        '3dsMax*', 'ReCap*', 'Dynamo*', 'FormIt*', 'AdSSO*', 'CER*'
+    )
+
     if ($WhatIf) {
         foreach ($d in $dirs) { Write-Log "WHATIF: Would remove directory: $d" }
         Write-Log "WHATIF: Would remove adsk* files from $Drive\ProgramData\FLEXnet"
+        Write-Log "WHATIF: Would remove Autodesk-named items from each user's Temp folder (patterns: $($tempPatterns -join ', '))"
         return 0
     }
 
@@ -777,6 +793,29 @@ function Remove-AutodeskFiles {
                     Write-Log "Failed to remove FLEXnet file '$($_.Name)': $_" -Level 'WARN'
                 }
             }
+    }
+
+    # Per-user Temp cleanup. Runs only after all product/ODIS/Identity Manager/
+    # Licensing uninstallers have completed (enforced by main flow), so the only
+    # files left here are install logs and extracted installer payloads.
+    if (Test-Path $usersRoot) {
+        Write-Log "Removing Autodesk-named items from per-user Temp folders..."
+        Get-ChildItem $usersRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $userTemp = Join-Path $_.FullName 'AppData\Local\Temp'
+            if (-not (Test-Path $userTemp)) { return }
+            foreach ($pat in $tempPatterns) {
+                Get-ChildItem -Path $userTemp -Filter $pat -Force -ErrorAction SilentlyContinue |
+                    ForEach-Object {
+                        try {
+                            Remove-Item $_.FullName -Recurse -Force -ErrorAction Stop
+                            Write-Log "Removed temp item: $($_.FullName)"
+                            $removed++
+                        } catch {
+                            Write-Log "Failed to remove temp item '$($_.FullName)': $_" -Level 'WARN'
+                        }
+                    }
+            }
+        }
     }
 
     Write-Log "File cleanup complete. Items removed: $removed"
