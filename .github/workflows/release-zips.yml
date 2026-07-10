@@ -1,0 +1,59 @@
+name: Release Script Zips
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'powershell/Remove-AutodeskAEC/**'
+      - 'powershell/Invoke-TempCleanup/**'
+      - 'powershell/Get-SystemInventory/**'
+      - 'powershell/Clear-PrintQueue/**'
+      - '.github/workflows/release-zips.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: ${{ matrix.script }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - script: Remove-AutodeskAEC
+            tag: remove-autodeskaec-latest
+          - script: Invoke-TempCleanup
+            tag: invoke-tempcleanup-latest
+          - script: Get-SystemInventory
+            tag: get-systeminventory-latest
+          - script: Clear-PrintQueue
+            tag: clear-printqueue-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SCRIPT: ${{ matrix.script }}
+      TAG: ${{ matrix.tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build zip
+        run: |
+          cd "powershell/$SCRIPT"
+          zip -j "$SCRIPT.zip" \
+              "$SCRIPT.ps1" \
+              "Run-$SCRIPT.bat" \
+              README.md
+
+      - name: Create rolling release if missing
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" \
+              --title "$SCRIPT (latest)" \
+              --notes "Rolling release - always contains the current build."
+
+      - name: Upload zip and refresh notes
+        run: |
+          gh release upload "$TAG" "powershell/$SCRIPT/$SCRIPT.zip" --clobber
+          gh release edit "$TAG" --notes "Rolling release built from ${GITHUB_SHA::7} on $(date -u +%Y-%m-%d).
+
+          Download $SCRIPT.zip below, extract the whole zip to a folder, then double-click Run-$SCRIPT.bat."

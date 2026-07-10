@@ -6,6 +6,16 @@ Clears stuck Windows print jobs by stopping the Print Spooler, purging the spool
 
 Stops the Spooler service, removes all stalled jobs, and brings the Spooler back up — the standard fix for stuck print queues. When a printer name is specified, jobs for that queue are cancelled via WMI without a full Spooler restart. Reports how many jobs were cleared and confirms the Spooler came back up.
 
+## Easy Run (No PowerShell Knowledge Needed)
+
+For users who are not comfortable with PowerShell, this folder includes `Run-Clear-PrintQueue.bat`. A ready-made zip (script + launcher + this README) is rebuilt automatically on every change and published at:
+
+**<https://github.com/GalactiData/scripts/releases/download/clear-printqueue-latest/Clear-PrintQueue.zip>**
+
+1. Download the zip to the target machine and **extract it** — the `.bat` and `.ps1` must stay together.
+2. Double-click `Run-Clear-PrintQueue.bat` and accept the administrator (UAC) prompt.
+3. Confirm when asked. All stuck print jobs across every printer queue are cleared. (Targeting a single printer requires the PowerShell command line below.)
+
 ## Usage
 
 ```powershell

@@ -6,6 +6,19 @@ Completely removes Autodesk AEC Collection products from a Windows machine, incl
 
 Scans the Windows registry to detect installed Autodesk AEC Collection products (2019–2027), then — after showing a full pre-flight summary and requiring explicit confirmation — follows Autodesk's official 5-step clean uninstall sequence: silently uninstalls all products via ODIS (2022+) or MSI (legacy), runs `RemoveODIS.exe` and the AdskIdentityManager uninstaller to release locked files, removes the Autodesk Desktop Licensing Service, deletes all leftover directories across Program Files, ProgramData, and all user profiles (including Autodesk-named install residue in each user's `%TEMP%` folder), removes Autodesk registry keys, and finally uninstalls the Autodesk Genuine Service last (as required by Autodesk). An animated progress bar shows during each long-running step. A timestamped log is always written automatically.
 
+## Easy Run (No PowerShell Knowledge Needed)
+
+For users who are not comfortable with PowerShell, this folder includes `Run-Remove-AutodeskAEC.bat`. A ready-made zip (script + launcher + this README) is rebuilt automatically on every change and published at:
+
+**<https://github.com/GalactiData/scripts/releases/download/remove-autodeskaec-latest/Remove-AutodeskAEC.zip>**
+
+1. Download the zip (or copy this whole folder) to the target machine and **extract it** — the `.bat` and `.ps1` must stay together.
+2. Double-click `Run-Remove-AutodeskAEC.bat`.
+3. Accept the administrator (UAC) prompt.
+4. Review the list of products/folders/registry keys shown, then type `YES` to proceed.
+
+The launcher handles administrator elevation and PowerShell execution-policy / downloaded-file blocks automatically, and runs the script in full-removal mode (`-All`). The window stays open at the end so the summary and log path remain visible. For anything other than full removal (specific products, dry run, etc.), use the PowerShell command line below.
+
 ## Usage
 
 ```powershell
@@ -77,7 +90,8 @@ Command-line arguments always override anything set in `$Config`, so a pre-confi
 
 - The script always writes a log. If `-LogPath` is not specified, the log is created automatically in `%TEMP%` and its path is printed at startup.
 - Before any destructive action, the script displays a full list of products, registry keys, and directories to be removed, followed by a warning that the action is irreversible. You must type `YES` exactly to proceed (bypassed by `-Force`).
-- If any product uninstall is skipped (installer not found, GUID missing) or fails, the script aborts before deleting any files or registry keys. Products that were not properly uninstalled are listed. Resolve them manually and re-run.
+- If any product uninstall is skipped (installer not found, GUID missing) or fails (non-success exit code from ODIS or msiexec), the script aborts before deleting any files or registry keys. Products that were not properly uninstalled are listed. Resolve them manually and re-run. MSI exit code 1605 ("product not installed") is tolerated, as sub-packages are often removed by their parent suite's uninstall first.
+- Autodesk Identity Manager is removed via its bundled `uninstall.exe` when present, or via MSI (1.15.x+ has no `uninstall.exe`). For both Identity Manager and Genuine Service, any orphaned Add/Remove Programs entry is swept afterwards so no ghost entries remain in Settings > Apps.
 - The script removes only Autodesk-owned files in `ProgramData\FLEXnet` (files matching `adsk*`). The FLEXnet directory itself is preserved as it may be shared with other software (e.g. Adobe).
 - `-BackupRegistry` creates one `.reg` file per registry key, placed in the same directory as the log file.
 - Products covered include: AutoCAD (all toolsets), Civil 3D, Revit, Navisworks, InfraWorks, ReCap Pro, Robot Structural Analysis, Advance Steel, Fabrication CADmep, FormIt, 3ds Max, Vehicle Tracking, Structural Bridge Design, Dynamo, App Manager, Batch Save Utility, Featured Apps, Save to Web and Mobile, and Autodesk shared components.

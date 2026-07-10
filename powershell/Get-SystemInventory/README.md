@@ -6,6 +6,16 @@ Collects a full hardware and software inventory snapshot of a Windows machine an
 
 Gathers CPU model and core count, RAM usage, disk drives, GPU, OS details (build, uptime, last boot), active network adapters with IPs and MACs, and the full list of installed software. Useful for onboarding a new machine, generating a record before a major change, or fleet auditing.
 
+## Easy Run (No PowerShell Knowledge Needed)
+
+For users who are not comfortable with PowerShell, this folder includes `Run-Get-SystemInventory.bat`. A ready-made zip (script + launcher + this README) is rebuilt automatically on every change and published at:
+
+**<https://github.com/GalactiData/scripts/releases/download/get-systeminventory-latest/Get-SystemInventory.zip>**
+
+1. Download the zip to the target machine and **extract it** — the `.bat` and `.ps1` must stay together.
+2. Double-click `Run-Get-SystemInventory.bat`. No administrator rights are needed and nothing on the machine is changed.
+3. The HTML report (`SystemInventory_<computername>.html`) is saved next to the launcher and opens automatically — ready to email to IT.
+
 ## Usage
 
 ```powershell

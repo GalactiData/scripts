@@ -1,0 +1,2 @@
+# Distribution zips are built by CI (release-remove-autodeskaec.yml), never committed.
+*.zip
