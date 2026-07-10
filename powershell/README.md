@@ -7,8 +7,10 @@ PowerShell scripts for Windows and cross-platform environments.
 | Script | Description |
 |--------|-------------|
 | [Clear-PrintQueue](Clear-PrintQueue/) | Clears stuck Windows print jobs by stopping the Spooler, purging the spool directory, and restarting |
+| [Disable-DepartedUser](Disable-DepartedUser/) | Offboards a departed AD user: disable, password reset, group removal, and move to a disabled OU with audit trail |
 | [Get-DiskSpaceReport](Get-DiskSpaceReport/) | Disk usage report across local drives with warning/critical thresholds and CSV export |
 | [Get-ExpiringPasswords](Get-ExpiringPasswords/) | Reports AD accounts with passwords expiring within a configurable number of days |
+| [Get-PatchStatus](Get-PatchStatus/) | Windows patch status: last update age, pending updates, and pending-reboot detection with exit codes |
 | [Get-StaleAccounts](Get-StaleAccounts/) | Finds inactive AD user/computer accounts with options to report, disable, or move them |
 | [Get-SystemInventory](Get-SystemInventory/) | Full hardware, OS, network, and software inventory with Console, CSV, and HTML output |
 | [Invoke-TempCleanup](Invoke-TempCleanup/) | Cleans temp files, browser caches, and Windows Update cache with space-freed reporting |

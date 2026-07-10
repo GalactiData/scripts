@@ -8,6 +8,7 @@ Shell scripts for Linux/macOS environments.
 |--------|-------------|
 | [disk-space-report](disk-space-report/) | Disk usage report across local filesystems with warning/critical thresholds and exit codes |
 | [docker-install](docker-install/) | Installs Docker Engine + Compose v2 plugin on Ubuntu/Debian and adds a user to the docker group |
+| [patch-report](patch-report/) | Reports pending updates, security updates, and reboot-required status for apt/dnf/yum systems |
 | [service-health-check](service-health-check/) | Checks systemd service status and optionally restarts stopped services |
 | [ssl-cert-check](ssl-cert-check/) | SSL/TLS certificate expiry checker for a list of domains |
 | [system-inventory](system-inventory/) | Full hardware, OS, network, and package inventory snapshot for Linux machines |
