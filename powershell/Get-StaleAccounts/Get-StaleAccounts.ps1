@@ -52,6 +52,7 @@
 
 [CmdletBinding(SupportsShouldProcess)]
 param (
+    [ValidateRange(1, 36500)]
     [int]$DaysInactive = 90,
     [ValidateSet('User', 'Computer', 'Both')]
     [string]$AccountType = 'Both',
@@ -69,6 +70,16 @@ $ErrorActionPreference = 'Continue'
 if ($Action -eq 'Move' -and -not $MoveToOU) {
     Write-Error "-MoveToOU is required when -Action is Move."
     exit 1
+}
+
+# Verify the target OU exists before disabling/moving anything
+if ($Action -eq 'Move') {
+    try {
+        $null = Get-ADObject -Identity $MoveToOU -ErrorAction Stop
+    } catch {
+        Write-Error "Target OU not found: $MoveToOU"
+        exit 1
+    }
 }
 
 $cutoff    = (Get-Date).AddDays(-$DaysInactive)
@@ -153,11 +164,7 @@ if ($Action -ne 'Report') {
     foreach ($acct in $sorted) {
         try {
             if ($Action -eq 'Disable') {
-                if ($acct.Type -eq 'User') {
-                    Disable-ADAccount -Identity $acct.DN
-                } else {
-                    Disable-ADAccount -Identity $acct.DN
-                }
+                Disable-ADAccount -Identity $acct.DN
             } elseif ($Action -eq 'Move') {
                 Move-ADObject -Identity $acct.DN -TargetPath $MoveToOU
             }

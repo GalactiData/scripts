@@ -37,6 +37,7 @@
 
 [CmdletBinding()]
 param (
+    [ValidateRange(1, 3650)]
     [int]$DaysWarning = 14,
     [switch]$IncludeNeverExpires,
     [string]$SearchBase,
@@ -49,6 +50,11 @@ $ErrorActionPreference = 'Continue'
 $domain         = Get-ADDomain
 $defaultPolicy  = Get-ADDefaultDomainPasswordPolicy
 $defaultMaxAge  = $defaultPolicy.MaxPasswordAge
+
+if (-not $defaultMaxAge -or $defaultMaxAge.TotalDays -le 0) {
+    Write-Warning ("The default domain policy has no maximum password age, so passwords never expire by default. " +
+                   "Only accounts covered by a fine-grained password policy will appear in this report.")
+}
 
 Write-Host ""
 Write-Host "  Get-ExpiringPasswords.ps1  |  Warning window: $DaysWarning day(s)" -ForegroundColor Cyan

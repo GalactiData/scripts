@@ -40,7 +40,7 @@ param (
     [switch]$SkipSoftware
 )
 
-$ErrorActionPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'Continue'
 
 # ---------------------------------------------------------------------------
 # Data collection
@@ -115,7 +115,7 @@ function Get-GpuInfo {
 function Get-NetworkInfo {
     Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | ForEach-Object {
         $iface = $_
-        $ips   = Get-NetIPAddress -InterfaceIndex $iface.InterfaceIndex |
+        $ips   = Get-NetIPAddress -InterfaceIndex $iface.InterfaceIndex -ErrorAction SilentlyContinue |
                  Where-Object { $_.AddressFamily -in 'IPv4', 'IPv6' }
         foreach ($ip in $ips) {
             [PSCustomObject]@{
@@ -138,7 +138,10 @@ function Get-SoftwareInfo {
     $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $list = [System.Collections.Generic.List[PSCustomObject]]::new()
     foreach ($hive in $hives) {
-        Get-ItemProperty $hive | Where-Object { $_.DisplayName -and -not $_.SystemComponent } |
+        # Probe: the WOW6432Node hive doesn't exist on 32-bit systems and some
+        # subkeys are unreadable without elevation, so suppress just this call
+        Get-ItemProperty $hive -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -and -not $_.SystemComponent } |
             ForEach-Object {
                 if ($seen.Add($_.DisplayName)) {
                     $list.Add([PSCustomObject]@{

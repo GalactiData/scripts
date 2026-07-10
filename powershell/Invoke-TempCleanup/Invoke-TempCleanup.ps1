@@ -60,7 +60,7 @@ $Config = @{
 }
 # ===========================================================================
 
-$ErrorActionPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'Continue'
 
 # Apply config defaults
 if (-not $PSBoundParameters.ContainsKey('Targets')       -and $Config.Targets.Count -gt 0)  { $Targets       = $Config.Targets }
@@ -83,7 +83,7 @@ function Write-Log {
 
 function Get-FolderSize([string]$Path) {
     if (-not (Test-Path $Path)) { return 0 }
-    (Get-ChildItem $Path -Recurse -Force | Measure-Object -Property Length -Sum).Sum
+    (Get-ChildItem $Path -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
 }
 
 function Remove-OldFiles {
@@ -91,7 +91,7 @@ function Remove-OldFiles {
     if (-not (Test-Path $Path)) { return 0 }
 
     $cutoff = if ($OlderThanDays -gt 0) { (Get-Date).AddDays(-$OlderThanDays) } else { $null }
-    $files  = Get-ChildItem $Path -Recurse -Force | Where-Object {
+    $files  = Get-ChildItem $Path -Recurse -Force -ErrorAction SilentlyContinue | Where-Object {
         -not $_.PSIsContainer -and (-not $cutoff -or $_.LastWriteTime -lt $cutoff)
     }
 
@@ -104,10 +104,12 @@ function Remove-OldFiles {
 
     $removed = 0
     foreach ($f in $files) {
-        try { Remove-Item $f.FullName -Force; $removed += $f.Length } catch { Write-Log "Skipped locked file: $($f.Name)" }
+        # -ErrorAction Stop: Remove-Item errors are non-terminating and would
+        # skip the catch, counting locked files as removed
+        try { Remove-Item $f.FullName -Force -ErrorAction Stop; $removed += $f.Length } catch { Write-Log "Skipped locked file: $($f.Name)" }
     }
     # Remove directories only if they are empty (avoids prompt on non-empty dirs)
-    Get-ChildItem $Path -Recurse -Force | Where-Object { $_.PSIsContainer } |
+    Get-ChildItem $Path -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer } |
         Sort-Object FullName -Descending |
         ForEach-Object {
             if (-not (Get-ChildItem $_.FullName -Force -ErrorAction SilentlyContinue)) {
@@ -126,14 +128,15 @@ Write-Log "Started. Targets=$($Targets -join ',') OlderThanDays=$OlderThanDays W
 
 if (-not $WhatIf -and -not $Force) {
     $answer = Read-Host "`n  This will delete files. Type YES to continue or anything else to abort"
-    if ($answer -cne 'YES') {
+    if ($answer -ne 'YES') {
         Write-Host "  Aborted. No files were removed." -ForegroundColor Green
         exit 0
     }
 }
 
-# Measure before
-$driveBefore = (Get-PSDrive C).Free
+# Measure before (system drive — everything cleaned lives on it)
+$sysDrive    = $env:SystemDrive.TrimEnd(':')
+$driveBefore = (Get-PSDrive $sysDrive).Free
 
 $freed = 0
 
@@ -143,7 +146,7 @@ foreach ($target in $Targets) {
             $freed += Remove-OldFiles "$env:windir\Temp" 'Windows Temp'
         }
         'UserTemp' {
-            Get-ChildItem 'C:\Users' -Directory | ForEach-Object {
+            Get-ChildItem "$env:SystemDrive\Users" -Directory | ForEach-Object {
                 $freed += Remove-OldFiles "$($_.FullName)\AppData\Local\Temp" "UserTemp ($($_.Name))"
             }
         }
@@ -151,7 +154,7 @@ foreach ($target in $Targets) {
             $freed += Remove-OldFiles "$env:windir\Prefetch" 'Prefetch'
         }
         'BrowserCache' {
-            Get-ChildItem 'C:\Users' -Directory | ForEach-Object {
+            Get-ChildItem "$env:SystemDrive\Users" -Directory | ForEach-Object {
                 $user = $_.FullName
                 $userName = $_.Name
 
@@ -209,7 +212,7 @@ foreach ($target in $Targets) {
         }
         'WindowsUpdate' {
             # Stop Windows Update service before clearing download cache
-            if (-not $WhatIf) { Stop-Service wuauserv -Force }
+            if (-not $WhatIf) { Stop-Service wuauserv -Force -ErrorAction SilentlyContinue }
             $freed += Remove-OldFiles "$env:windir\SoftwareDistribution\Download" 'Windows Update Cache'
             if (-not $WhatIf) { Start-Service wuauserv }
         }
@@ -233,7 +236,7 @@ foreach ($target in $Targets) {
     }
 }
 
-$driveAfter = (Get-PSDrive C).Free
+$driveAfter = (Get-PSDrive $sysDrive).Free
 $actual     = $driveAfter - $driveBefore
 
 $modeLabel = if ($WhatIf) { ' (WhatIf — no files deleted)' } else { '' }
@@ -243,7 +246,7 @@ Write-Host "  SUMMARY$modeLabel"
 Write-Host "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
 Write-Host "  Estimated freed : $([math]::Round($freed/1MB,2)) MB"
 if (-not $WhatIf) {
-    Write-Host "  Actual C: freed : $([math]::Round($actual/1MB,2)) MB"
+    Write-Host "  Actual freed    : $([math]::Round($actual/1MB,2)) MB (on $env:SystemDrive)"
 }
 Write-Host "  Log             : $LogPath"
 Write-Host "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`n" -ForegroundColor Cyan

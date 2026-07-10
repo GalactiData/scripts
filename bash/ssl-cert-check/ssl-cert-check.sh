@@ -66,6 +66,26 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# ---------------------------------------------------------------------------
+# Validate arguments
+# ---------------------------------------------------------------------------
+if ! [[ "$WARN_DAYS" =~ ^[0-9]+$ ]]; then
+    echo "Invalid warning threshold: '$WARN_DAYS' (must be a non-negative integer)" >&2
+    exit 1
+fi
+if ! [[ "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
+    echo "Invalid port: '$PORT' (must be an integer 1-65535)" >&2
+    exit 1
+fi
+if ! [[ "$TIMEOUT" =~ ^[0-9]+$ ]] || (( TIMEOUT < 1 )); then
+    echo "Invalid timeout: '$TIMEOUT' (must be a positive integer)" >&2
+    exit 1
+fi
+if [[ -n "$OUTPUT_FILE" ]] && ! touch "$OUTPUT_FILE" 2>/dev/null; then
+    echo "Cannot write to output file: $OUTPUT_FILE" >&2
+    exit 1
+fi
+
 # Load domains from file
 if [[ -n "$DOMAIN_FILE" ]]; then
     if [[ ! -r "$DOMAIN_FILE" ]]; then
@@ -107,7 +127,9 @@ check_domain() {
 
     if [[ -z "$cert_info" ]]; then
         echo -e "${RED}  UNREACHABLE  ${RESET} $domain:$PORT"
-        [[ -n "$OUTPUT_FILE" ]] && echo "[$(date '+%Y-%m-%d %H:%M:%S')] UNREACHABLE $domain" >> "$OUTPUT_FILE"
+        if [[ -n "$OUTPUT_FILE" ]]; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] UNREACHABLE $domain" >> "$OUTPUT_FILE"
+        fi
         return
     fi
 
@@ -145,8 +167,11 @@ check_domain() {
     printf "${color}  %-10s${RESET}  %-40s  Expires: %s  (%d days)\n" \
         "$status" "$domain" "$expiry_display" "$days_left"
 
-    [[ -n "$OUTPUT_FILE" ]] && \
+    # if-form (not `[[ ]] &&`) so the function returns 0 when no output file
+    # is set; otherwise `set -e` kills the script after the first domain.
+    if [[ -n "$OUTPUT_FILE" ]]; then
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] $status $domain expires=$expiry_display days=$days_left" >> "$OUTPUT_FILE"
+    fi
 }
 
 # ---------------------------------------------------------------------------

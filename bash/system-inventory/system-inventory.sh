@@ -48,6 +48,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---------------------------------------------------------------------------
+# Validate arguments
+# ---------------------------------------------------------------------------
+if [[ "$FORMAT" != "text" && "$FORMAT" != "csv" ]]; then
+    echo "Invalid format: '$FORMAT' (must be text or csv)" >&2
+    exit 1
+fi
+if [[ -n "$OUTPUT_FILE" ]] && ! touch "$OUTPUT_FILE" 2>/dev/null; then
+    echo "Cannot write to output file: $OUTPUT_FILE" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # Output helpers
 # ---------------------------------------------------------------------------
 TMPOUT=$(mktemp)

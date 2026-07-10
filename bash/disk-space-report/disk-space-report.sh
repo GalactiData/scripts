@@ -59,6 +59,26 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---------------------------------------------------------------------------
+# Validate arguments
+# ---------------------------------------------------------------------------
+if ! [[ "$WARN_PCT" =~ ^[0-9]+$ ]] || (( WARN_PCT < 1 || WARN_PCT > 99 )); then
+    echo "Invalid warning threshold: '$WARN_PCT' (must be an integer 1-99)" >&2
+    exit 1
+fi
+if ! [[ "$CRIT_PCT" =~ ^[0-9]+$ ]] || (( CRIT_PCT < 1 || CRIT_PCT > 99 )); then
+    echo "Invalid critical threshold: '$CRIT_PCT' (must be an integer 1-99)" >&2
+    exit 1
+fi
+if (( WARN_PCT > CRIT_PCT )); then
+    echo "Warning threshold ($WARN_PCT) cannot be higher than critical threshold ($CRIT_PCT)" >&2
+    exit 1
+fi
+if [[ -n "$OUTPUT_FILE" ]] && ! touch "$OUTPUT_FILE" 2>/dev/null; then
+    echo "Cannot write to output file: $OUTPUT_FILE" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # Pseudo-filesystem types to exclude
 # ---------------------------------------------------------------------------
 EXCLUDE_TYPES="tmpfs,devtmpfs,sysfs,proc,cgroup,cgroup2,overlay,squashfs,devpts,hugetlbfs,mqueue,pstore,securityfs,debugfs,tracefs,bpf,fusectl,efivarfs"

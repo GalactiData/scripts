@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # service-health-check.sh — Check Linux service status and optionally restart stopped services.
 
-set -uo pipefail
+set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # Defaults (edit to hardcode for scheduled/non-interactive use)
@@ -78,6 +78,12 @@ if [[ ${#SERVICES[@]} -eq 0 ]]; then
     usage
 fi
 
+# Validate log file is writable before doing any work
+if [[ -n "$LOG_FILE" ]] && ! touch "$LOG_FILE" 2>/dev/null; then
+    echo "Cannot write to log file: $LOG_FILE" >&2
+    exit 1
+fi
+
 # Require systemctl
 if ! command -v systemctl &>/dev/null; then
     echo "systemctl is required but not found. This script requires a systemd-based system." >&2
@@ -87,10 +93,12 @@ fi
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
+# if-form (not `[[ ]] &&`) so the function returns 0 when no log file is set;
+# otherwise `set -e` would abort the script on every log call.
 log() {
-    local msg
-    msg="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
-    [[ -n "$LOG_FILE" ]] && echo "$msg" >> "$LOG_FILE"
+    if [[ -n "$LOG_FILE" ]]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
+    fi
 }
 
 # ---------------------------------------------------------------------------

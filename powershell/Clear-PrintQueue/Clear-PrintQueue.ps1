@@ -109,14 +109,21 @@ if ($WhatIf) {
 
 if (-not $Force) {
     $answer = Read-Host "  Type YES to clear the queue or anything else to abort"
-    if ($answer -cne 'YES') {
+    if ($answer -ne 'YES') {
         Write-Host "  Aborted. No changes made.`n" -ForegroundColor Green
         exit 0
     }
 }
 
 Write-Log "Stopping Print Spooler..."
-Stop-Service -Name Spooler -Force
+# -ErrorAction Stop: if the Spooler can't be stopped, abort rather than try
+# to wipe spool files that are still locked by the running service
+try {
+    Stop-Service -Name Spooler -Force -ErrorAction Stop
+} catch {
+    Write-Log "Could not stop the Print Spooler: $_" -Level 'WARN'
+    exit 1
+}
 Start-Sleep -Seconds 2
 
 $cleared = 0
@@ -126,7 +133,7 @@ if ($PrinterName) {
     Write-Log "Cancelling jobs for printer matching '$PrinterName'..."
     $targetJobs | ForEach-Object {
         try {
-            $_ | Remove-CimInstance
+            $_ | Remove-CimInstance -ErrorAction Stop
             $cleared++
             Write-Log "Cancelled: $($_.Name)"
         } catch {
@@ -137,9 +144,8 @@ if ($PrinterName) {
     # Full clear: delete all spool files
     Write-Log "Clearing spool directory: $spoolDir"
     $spoolFiles = Get-ChildItem $spoolDir -Force -ErrorAction SilentlyContinue
-    $cleared    = $spoolFiles.Count
     foreach ($f in $spoolFiles) {
-        try   { Remove-Item $f.FullName -Force }
+        try   { Remove-Item $f.FullName -Force -ErrorAction Stop; $cleared++ }
         catch { Write-Log "Could not remove '$($f.Name)': $_" -Level 'WARN' }
     }
     Write-Log "Removed $cleared spool file(s)."

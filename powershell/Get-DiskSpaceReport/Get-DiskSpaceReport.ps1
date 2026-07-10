@@ -35,19 +35,30 @@
 param (
     [ValidateRange(1, 99)][int]$WarnPercent     = 20,
     [ValidateRange(1, 99)][int]$CriticalPercent = 10,
+    [ValidatePattern('^[A-Za-z]:?\\?$')]
     [string[]]$Drive,
     [string]$OutputPath
 )
 
-$ErrorActionPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'Continue'
+
+if ($CriticalPercent -ge $WarnPercent) {
+    Write-Error "-CriticalPercent ($CriticalPercent) must be lower than -WarnPercent ($WarnPercent)."
+    exit 1
+}
 
 $filter = 'DriveType = 3'
-$disks  = Get-CimInstance Win32_LogicalDisk -Filter $filter |
-          Where-Object { $_.Size -gt 0 }
+$disks  = @(Get-CimInstance Win32_LogicalDisk -Filter $filter |
+          Where-Object { $_.Size -gt 0 })
 
 if ($Drive) {
-    $normalized = $Drive | ForEach-Object { $_.TrimEnd('\').ToUpper() }
-    $disks = $disks | Where-Object { $normalized -contains $_.DeviceID.ToUpper() }
+    # Accept 'C', 'C:' or 'C:\' and normalize to 'C:'
+    $normalized = $Drive | ForEach-Object { "$($_.TrimEnd('\').TrimEnd(':').ToUpper()):" }
+    $disks = @($disks | Where-Object { $normalized -contains $_.DeviceID.ToUpper() })
+    if ($disks.Count -eq 0) {
+        Write-Warning "No fixed drives matched: $($normalized -join ', ')"
+        exit 1
+    }
 }
 
 $results = $disks | ForEach-Object {
