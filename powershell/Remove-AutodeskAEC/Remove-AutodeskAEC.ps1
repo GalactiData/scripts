@@ -166,6 +166,9 @@ function Wait-ProcessWithProgress {
         [string]$Activity
     )
     if (-not $Process) { return -1 }
+    # Cache the process handle. Without this, .ExitCode is $null after the
+    # process exits (known Start-Process -PassThru behavior).
+    $null = $Process.Handle
     $spinner = [char[]]@('|', '/', '-', '\')
     $i = 0
     try {
@@ -179,6 +182,7 @@ function Wait-ProcessWithProgress {
     } finally {
         Write-Progress -Activity $Activity -Completed
     }
+    $Process.WaitForExit()
     return $Process.ExitCode
 }
 
@@ -475,6 +479,9 @@ function Invoke-AutodeskUninstall {
         $proc = Start-Process -FilePath $exe -ArgumentList $silentArgs -PassThru -NoNewWindow
         $exitCode = Wait-ProcessWithProgress -Process $proc -Activity "Uninstalling $label"
         Write-Log "ODIS uninstall exit code: $exitCode"
+        if ($exitCode -notin @(0, 3010)) {
+            throw "ODIS uninstaller returned exit code $exitCode"
+        }
 
     } else {
         # Legacy MSI — extract GUID from PSChildName or UninstallString
@@ -496,6 +503,13 @@ function Invoke-AutodeskUninstall {
         $proc = Start-Process -FilePath 'msiexec.exe' -ArgumentList $msiArgs -PassThru -NoNewWindow
         $exitCode = Wait-ProcessWithProgress -Process $proc -Activity "Uninstalling $label (MSI)"
         Write-Log "MSI uninstall exit code: $exitCode"
+        if ($exitCode -eq 1605) {
+            # Not registered with Windows Installer — typically a sub-package
+            # already removed by its parent suite's ODIS uninstall. Benign.
+            Write-Log "$label is not registered with Windows Installer (1605); already removed." -Level 'WARN'
+        } elseif ($exitCode -notin @(0, 1641, 3010)) {
+            throw "msiexec returned exit code $exitCode (see $msiLog)"
+        }
     }
 }
 
@@ -535,26 +549,67 @@ function Invoke-RemoveODIS {
 }
 
 # ---------------------------------------------------------------------------
-# Run AdskIdentityManager\uninstall.exe — releases Identity Manager file locks.
+# Remove Autodesk Identity Manager — releases Identity Manager file locks.
+# Older versions bundle an uninstall.exe; 1.15.x+ install as a plain MSI, so
+# fall back to msiexec when the EXE is absent. Either way, finish by removing
+# any orphaned Add/Remove Programs entry.
 # Must run after ODIS removal, before file deletion.
 # ---------------------------------------------------------------------------
 function Invoke-RemoveIdentityManager {
     $idMgrRoot    = "$Drive\Program Files\Autodesk\AdskIdentityManager"
     $uninstaller  = Join-Path $idMgrRoot 'uninstall.exe'
 
-    if (-not (Test-Path $uninstaller)) {
-        Write-Log "AdskIdentityManager uninstaller not found at '$uninstaller'. Skipping."
-        return
-    }
-
     if ($WhatIf) {
-        Write-Log "WHATIF: Would run AdskIdentityManager uninstaller: $uninstaller"
+        Write-Log "WHATIF: Would remove Autodesk Identity Manager (uninstall.exe if present, otherwise MSI)"
         return
     }
 
-    Write-Log "Running AdskIdentityManager uninstaller..."
-    $proc = Start-Process -FilePath $uninstaller -ArgumentList '--mode unattended' -PassThru -NoNewWindow -ErrorAction SilentlyContinue
-    Wait-ProcessWithProgress -Process $proc -Activity "Removing Autodesk Identity Manager..." | Out-Null
+    if (Test-Path $uninstaller) {
+        Write-Log "Running AdskIdentityManager uninstaller..."
+        $proc = Start-Process -FilePath $uninstaller -ArgumentList '--mode unattended' -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+        Wait-ProcessWithProgress -Process $proc -Activity "Removing Autodesk Identity Manager..." | Out-Null
+    } else {
+        # Identity Manager 1.15.x and later ship as a plain MSI with no
+        # uninstall.exe. Fall back to msiexec using the GUID from the
+        # Add/Remove Programs entry.
+        Write-Log "AdskIdentityManager uninstall.exe not found. Trying MSI uninstall..."
+        $entry = $null
+        $idMgrUninstallHives = @(
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+        )
+        foreach ($hive in $idMgrUninstallHives) {
+            $entry = Get-ItemProperty $hive -ErrorAction SilentlyContinue |
+                Where-Object { $_.PSObject.Properties['DisplayName'] -and
+                               $_.DisplayName -like '*Autodesk Identity Manager*' } |
+                Select-Object -First 1
+            if ($entry) { break }
+        }
+
+        if ($entry) {
+            $guid = $entry.PSChildName -replace '[{}]', ''
+            if ($guid -notmatch '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$' -and
+                $entry.UninstallString -match '\{([0-9A-Fa-f-]{36})\}') {
+                $guid = $Matches[1]
+            }
+            if ($guid -match '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$') {
+                $msiLog = Join-Path ([System.IO.Path]::GetDirectoryName($script:LogPath)) `
+                                    ([System.IO.Path]::GetFileNameWithoutExtension($script:LogPath) + "_msi_$guid.log")
+                $proc = Start-Process -FilePath 'msiexec.exe' `
+                                      -ArgumentList "/X{$guid} /quiet /norestart /l*v `"$msiLog`"" `
+                                      -PassThru -NoNewWindow
+                $exitCode = Wait-ProcessWithProgress -Process $proc -Activity "Removing Autodesk Identity Manager (MSI)..."
+                Write-Log "Identity Manager MSI uninstall exit code: $exitCode"
+                if ($exitCode -notin @(0, 1605, 1641, 3010)) {
+                    Write-Log "Identity Manager MSI uninstall failed (exit code $exitCode, see $msiLog). Orphaned entries are removed below." -Level 'WARN'
+                }
+            } else {
+                Write-Log "Cannot determine MSI GUID for Identity Manager. Orphaned entries are removed below." -Level 'WARN'
+            }
+        } else {
+            Write-Log "Autodesk Identity Manager not found in registry. Nothing to uninstall."
+        }
+    }
 
     # Wait up to 60 s for the directory to empty
     $elapsed = 0
@@ -633,11 +688,30 @@ function Remove-GenuineService {
             return
         }
     }
+    $msiLog = Join-Path ([System.IO.Path]::GetDirectoryName($script:LogPath)) `
+                        ([System.IO.Path]::GetFileNameWithoutExtension($script:LogPath) + "_msi_$guid.log")
     $proc = Start-Process -FilePath 'msiexec.exe' `
-                          -ArgumentList "/X{$guid} /quiet /norestart" `
+                          -ArgumentList "/X{$guid} /quiet /norestart /l*v `"$msiLog`"" `
                           -PassThru -NoNewWindow
     $exitCode = Wait-ProcessWithProgress -Process $proc -Activity "Uninstalling Autodesk Genuine Service..."
     Write-Log "Genuine Service uninstall exit code: $exitCode"
+    if ($exitCode -notin @(0, 1605, 1641, 3010)) {
+        Write-Log "Genuine Service uninstall failed (exit code $exitCode, see $msiLog). This step runs after file deletion, so a failure here is expected occasionally; the orphaned entry is removed below." -Level 'WARN'
+    }
+
+    # Sweep any leftover Add/Remove Programs entry. The Genuine Service files
+    # are already gone by this point (it must run after file deletion per
+    # Autodesk's guide), so a failed msiexec would otherwise leave a ghost
+    # entry in Settings > Apps.
+    foreach ($hive in $hives) {
+        Get-ItemProperty $hive -ErrorAction SilentlyContinue |
+            Where-Object { $_.PSObject.Properties['DisplayName'] -and
+                           $_.DisplayName -like '*Autodesk Genuine*' } |
+            ForEach-Object {
+                Remove-Item $_.PSPath -Recurse -Force -ErrorAction SilentlyContinue
+                Write-Log "Removed leftover Genuine Service uninstall registry entry: $($_.PSChildName)"
+            }
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -973,9 +1047,9 @@ if ($targets.Count -gt 0) {
 
     # Step 1a: Uninstall all products except those with dedicated removal steps.
     # Genuine Service must be last (per Autodesk's clean uninstall guide).
-    # Identity Manager is handled by Invoke-RemoveIdentityManager in step 2;
-    # its UninstallString is a plain EXE with no MSI GUID, so it would always
-    # fail the GUID check and abort cleanup if included here.
+    # Identity Manager is handled by Invoke-RemoveIdentityManager in step 2:
+    # older versions use a bundled uninstall.exe, newer (1.15.x+) are MSI, and
+    # both paths clean up the orphaned Add/Remove Programs entry afterwards.
     foreach ($t in $targets) {
         if ($t.Name -like '*Genuine*') { continue }
         if ($t.Name -like '*Identity Manager*') { continue }
